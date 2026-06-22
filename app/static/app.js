@@ -498,14 +498,6 @@ function renderHomeGlance(data) {
       <p>${callsignTextHtml(summaryExpanded ? (summaryText || "No summary available.") : compactText(summaryText, "No summary available.", 170))}</p>
       ${summaryExpanded ? `<button class="secondary glance-card-link" data-home-link="summary" type="button">View in Summary</button>` : ""}
     </article>
-    <article class="glance-card glance-card-wide">
-      <div class="glance-card-head">
-        <span class="metric-label">Activity</span>
-        <span class="pill">${escapeHtml(formatActivityWindowLabel(data.activity))}</span>
-      </div>
-      <strong>${escapeHtml(activitySummary(data.activity))}</strong>
-      ${activitySparkline(data.activity)}
-    </article>
   `;
   setupHomeGlanceActions();
 }
@@ -683,37 +675,6 @@ function compactText(value, fallback = "", maxLength = 120) {
   if (!text) return fallback;
   if (text.length <= maxLength) return text;
   return `${text.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
-}
-
-function activitySummary(activity) {
-  if (!activity || !Array.isArray(activity.repeaters) || !activity.repeaters.length) return "No repeaters";
-  const count = activity.repeaters.reduce((sum, repeater) => sum + Number(repeater.total_count || 0), 0);
-  const seconds = activity.repeaters.reduce((sum, repeater) => sum + Number(repeater.total_duration_seconds || 0), 0);
-  if (!count) return "No activity";
-  return `${count} ${count === 1 ? "transmission" : "transmissions"} - ${formatDuration(seconds)}`;
-}
-
-function activitySparkline(activity) {
-  if (!activity || !Array.isArray(activity.buckets) || !activity.buckets.length) {
-    return '<div class="mini-activity" style="--bucket-count: 1" aria-label="No activity data"></div>';
-  }
-  const repeaters = Array.isArray(activity.repeaters) ? activity.repeaters : [];
-  const totals = activity.buckets.map((bucket, index) => {
-    const value = repeaters.reduce((sum, repeater) => {
-      const repeaterBucket = repeater.buckets[index] || {};
-      return sum + (Number(repeaterBucket.duration_seconds || 0) || Number(repeaterBucket.count || 0));
-    }, 0);
-    return { bucket, value };
-  });
-  const maxValue = Math.max(1, ...totals.map((row) => row.value));
-  const cells = totals
-    .map(({ bucket, value }) => {
-      const level = value ? Math.min(0.95, 0.22 + (value / maxValue) * 0.73) : 0;
-      const title = `${formatActivityDateTime(bucket.start_time)}: ${value ? formatDuration(value) : "no activity"}`;
-      return `<span class="${value ? "active" : ""}" style="--activity-level: ${level.toFixed(2)}" title="${escapeHtml(title)}"></span>`;
-    })
-    .join("");
-  return `<div class="mini-activity" style="--bucket-count: ${Math.max(1, totals.length)}" aria-label="${escapeHtml(formatActivityWindowLabel(activity))} of activity">${cells}</div>`;
 }
 
 function renderReceivers(data) {
