@@ -316,6 +316,13 @@ class SummaryService:
         if len(selection.transcripts) < self.config.summary.min_transcripts:
             text = "Not enough traffic to summarize for this window."
             status = "not_enough_traffic"
+        elif (
+            self.config.summary.skip_automated_only
+            and selection.transcripts
+            and not any(non_automated_transcript_text(row.get("text", "")) for row in selection.transcripts)
+        ):
+            text = "Only automated/system repeater messages were heard in this window."
+            status = "automated_only"
         elif self.config.summary.backend == "noop":
             text = self._noop_summary(selection)
             status = "completed"
@@ -467,21 +474,14 @@ class SummaryWorker:
         summary_ids: list[int] = []
         repeaters = self.db.list_repeaters()
         local_tz = summary_timezone(self.config.summary.timezone)
-        targets: list[tuple[str, int | None]] = [
-            ("quarter_hour", None),
-            ("hour", None),
-            ("day", None),
-        ]
-        for repeater in repeaters:
-            targets.extend(
-                [
-                    ("quarter_hour", int(repeater["id"])),
-                    ("hour", int(repeater["id"])),
-                    ("day", int(repeater["id"])),
-                ]
-            )
+        bounds_now = _as_utc(now) - timedelta(seconds=self.config.summary.schedule_delay_seconds)
+        windows = list(dict.fromkeys(self.config.summary.scheduled_windows))
+        targets: list[tuple[str, int | None]] = [(window_name, None) for window_name in windows]
+        if self.config.summary.per_repeater_scheduled:
+            for repeater in repeaters:
+                targets.extend((window_name, int(repeater["id"])) for window_name in windows)
         for window_name, repeater_id in targets:
-            start, end = scheduled_window_bounds(window_name, now, local_tz)
+            start, end = scheduled_window_bounds(window_name, bounds_now, local_tz)
             selection = select_source_transcripts_between(self.db, window_name, start, end, repeater_id, local_tz)
             source_ids = [row["id"] for row in selection.transcripts]
             if len(source_ids) < self.config.summary.min_transcripts:
@@ -546,7 +546,14 @@ class SummaryWorker:
             latest_source_ids == source_ids
             and row.get("model") == self.config.summary.model
             and row.get("prompt_version") == self.config.summary.prompt_version
-            and row.get("status") == "completed"
+            and (
+                row.get("status") == "completed"
+                or (
+                    row.get("status") == "automated_only"
+                    and self.config.summary.skip_automated_only
+                )
+                or row.get("status") == "not_enough_traffic"
+            )
         ):
             return True
         self.db.delete_summary(int(row["id"]))

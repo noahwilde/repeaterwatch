@@ -637,6 +637,28 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.settings-fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.settings-fieldset legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.settings-fieldset .check {
+  align-self: end;
+}
+
 .check {
   display: flex;
   align-items: center;
@@ -1114,6 +1136,10 @@ textarea {
   color: var(--amber);
 }
 
+.state-automated_only {
+  color: var(--muted);
+}
+
 .activity-chart {
   display: grid;
   gap: 12px;
@@ -1390,7 +1416,8 @@ audio {
   .metrics,
   .summary-stats,
   .layout,
-  .form-grid {
+  .form-grid,
+  .settings-fieldset {
     grid-template-columns: 1fr;
   }
 

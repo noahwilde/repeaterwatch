@@ -128,7 +128,11 @@ class TranscriptionConfig(BaseModel):
     remote_base_url: str = "https://api.openai.com/v1"
     remote_api_key_env: str = "OPENAI_API_KEY"
     remote_model: str = "whisper-1"
+    remote_min_duration_seconds: float = Field(default=2.0, ge=0, le=60)
     poll_seconds: float = Field(default=5.0, ge=1)
+
+
+SummaryScheduledWindow = Literal["quarter_hour", "hour", "day"]
 
 
 class SummaryConfig(BaseModel):
@@ -139,6 +143,12 @@ class SummaryConfig(BaseModel):
     timezone: str = "local"
     prompt_version: str = "repeaterwatch-v6-scheduled-timeline"
     min_transcripts: int = Field(default=1, ge=1)
+    scheduled_windows: list[SummaryScheduledWindow] = Field(
+        default_factory=lambda: ["hour", "day"]
+    )
+    per_repeater_scheduled: bool = False
+    skip_automated_only: bool = True
+    schedule_delay_seconds: float = Field(default=120.0, ge=0, le=3600)
     poll_seconds: float = Field(default=60.0, ge=10)
 
 

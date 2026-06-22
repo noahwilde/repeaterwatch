@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+
+from app.config import AppConfig
 from app.transcribe.whisper import (
     STATIC_ONLY_TEXT,
+    TranscriptionService,
     build_transcription_prompt,
     finalize_transcript_result,
     low_confidence_text,
@@ -102,4 +106,22 @@ def test_empty_transcript_is_marked_static_only():
     )
 
     assert result.text == STATIC_ONLY_TEXT
+    assert result.low_confidence is True
+
+
+def test_remote_transcription_skips_short_recording_before_api_key_check():
+    config = AppConfig()
+    config.transcription.backend = "openai-compatible"
+    config.transcription.remote_min_duration_seconds = 2.0
+
+    result = asyncio.run(
+        TranscriptionService(config).transcribe(
+            "missing.wav",
+            {"duration_seconds": 1.0},
+        )
+    )
+
+    assert result.text == STATIC_ONLY_TEXT
+    assert result.original_text == STATIC_ONLY_TEXT
+    assert result.backend == "openai-compatible-skipped"
     assert result.low_confidence is True

@@ -58,6 +58,15 @@ def test_vox_default_hang_time_keeps_short_gaps_together():
     assert config.post_silence_seconds == 6.0
 
 
+def test_ai_usage_defaults_reduce_unnecessary_remote_calls():
+    config = AppConfig()
+
+    assert config.transcription.remote_min_duration_seconds == 2.0
+    assert config.summary.scheduled_windows == ["hour", "day"]
+    assert config.summary.per_repeater_scheduled is False
+    assert config.summary.skip_automated_only is True
+
+
 def test_duplicate_repeater_names_rejected():
     with pytest.raises(ValidationError):
         AppConfig.model_validate(

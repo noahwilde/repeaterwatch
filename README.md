@@ -118,15 +118,34 @@ backend = "openai-compatible"
 remote_base_url = "https://api.openai.com/v1"
 remote_api_key_env = "OPENAI_API_KEY"
 remote_model = "gpt-4o-transcribe"
+remote_min_duration_seconds = 2.0
 
 [summary]
 backend = "openai-compatible"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-4.1-mini"
+scheduled_windows = ["hour", "day"]
+per_repeater_scheduled = false
+skip_automated_only = true
+schedule_delay_seconds = 120.0
 ```
 
 For local-only operation, leave both backends as `noop` or use `faster-whisper` for transcription and Ollama for summaries.
+
+## Minimizing API Usage
+
+OpenAI-compatible transcription and summary backends are optional. To reduce unnecessary API calls:
+
+- Leave `[transcription].backend` and `[summary].backend` as `noop` until you are ready to use remote AI.
+- Prefer local `faster-whisper` transcription and Ollama summaries when the Pi can handle the workload.
+- Keep `[transcription].remote_min_duration_seconds` at `2.0` or higher so very short static bursts and courtesy tones are marked `[static only]` without a remote transcription call.
+- Use `[summary].scheduled_windows = ["hour", "day"]` to avoid automatic 15-minute summaries. Add `"quarter_hour"` only if you want them.
+- Keep `[summary].per_repeater_scheduled = false` unless you need separate scheduled summaries for every repeater. Manual per-repeater summaries still work from the Summary tab.
+- Keep `[summary].skip_automated_only = true` so windows containing only repeater IDs, welcome messages, and tone announcements do not call the summary model.
+- Raise `[summary].min_transcripts` to `2` or `3` if one isolated transmission is not worth summarizing automatically.
+
+These same controls are available in the More tab under Audio and Retention.
 
 ## Web Push Notifications
 

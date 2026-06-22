@@ -1682,6 +1682,8 @@ async function refreshLogs() {
 
 function renderSettings(config) {
   if (!config || document.activeElement.closest("#settingsForm")) return;
+  const form = els.settingsForm;
+  const scheduledWindows = new Set((config.summary && config.summary.scheduled_windows) || []);
   els.settingsForm.elements.threshold.value = config.vox.threshold;
   els.settingsForm.elements.pre_roll_seconds.value = config.vox.pre_roll_seconds;
   els.settingsForm.elements.post_silence_seconds.value = config.vox.post_silence_seconds;
@@ -1692,6 +1694,14 @@ function renderSettings(config) {
   els.settingsForm.elements.summaries_days.value = config.retention.summaries_days;
   els.settingsForm.elements.transcript_display_limit.value = config.retention.transcript_display_limit;
   els.settingsForm.elements.summary_display_limit.value = config.retention.summary_display_limit;
+  form.elements.remote_min_duration_seconds.value = config.transcription.remote_min_duration_seconds;
+  form.elements.summary_min_transcripts.value = config.summary.min_transcripts;
+  form.elements.summary_schedule_delay_seconds.value = config.summary.schedule_delay_seconds;
+  form.elements.summary_window_quarter_hour.checked = scheduledWindows.has("quarter_hour");
+  form.elements.summary_window_hour.checked = scheduledWindows.has("hour");
+  form.elements.summary_window_day.checked = scheduledWindows.has("day");
+  form.elements.per_repeater_scheduled.checked = Boolean(config.summary.per_repeater_scheduled);
+  form.elements.skip_automated_only.checked = Boolean(config.summary.skip_automated_only);
   if (!liveFormInitialized) {
     const firstRepeater = config.repeaters && config.repeaters[0];
     if (firstRepeater) {
@@ -1940,9 +1950,13 @@ els.summaryForm.addEventListener("submit", async (event) => {
     const summary = await fetchJson("/api/summaries", { method: "POST", body: JSON.stringify(payload) });
     adHocSummary = summary;
     if (els.summaryStatus) {
-      els.summaryStatus.textContent = summary.status === "not_enough_traffic"
-        ? "Not enough traffic for that window."
-        : "Ad hoc summary generated.";
+      if (summary.status === "not_enough_traffic") {
+        els.summaryStatus.textContent = "Not enough traffic for that window.";
+      } else if (summary.status === "automated_only") {
+        els.summaryStatus.textContent = "Only automated repeater messages in that window.";
+      } else {
+        els.summaryStatus.textContent = "Ad hoc summary generated.";
+      }
     }
     renderSummaries(currentSummaries, currentRepeaters);
   } catch (error) {
@@ -1958,6 +1972,10 @@ els.settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!currentConfig) return;
   const data = formData(els.settingsForm);
+  const scheduledWindows = [];
+  if (els.settingsForm.elements.summary_window_quarter_hour.checked) scheduledWindows.push("quarter_hour");
+  if (els.settingsForm.elements.summary_window_hour.checked) scheduledWindows.push("hour");
+  if (els.settingsForm.elements.summary_window_day.checked) scheduledWindows.push("day");
   const result = await withSaveFeedback(els.settingsForm, els.settingsStatus, {
     saving: "Saving settings...",
     saved: "Settings saved.",
@@ -1978,6 +1996,16 @@ els.settingsForm.addEventListener("submit", async (event) => {
           summaries_days: Number(data.summaries_days),
           transcript_display_limit: Number(data.transcript_display_limit),
           summary_display_limit: Number(data.summary_display_limit),
+        },
+        transcription: {
+          remote_min_duration_seconds: Number(data.remote_min_duration_seconds),
+        },
+        summary: {
+          min_transcripts: Number(data.summary_min_transcripts),
+          scheduled_windows: scheduledWindows,
+          per_repeater_scheduled: els.settingsForm.elements.per_repeater_scheduled.checked,
+          skip_automated_only: els.settingsForm.elements.skip_automated_only.checked,
+          schedule_delay_seconds: Number(data.summary_schedule_delay_seconds),
         },
       }),
     })

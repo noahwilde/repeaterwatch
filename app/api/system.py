@@ -119,6 +119,10 @@ async def update_audio_settings(payload: dict, request: Request) -> dict:
         data["vox"] = {**data["vox"], **payload["vox"]}
     if "retention" in payload:
         data["retention"] = {**data["retention"], **payload["retention"]}
+    if "transcription" in payload:
+        data["transcription"] = {**data["transcription"], **payload["transcription"]}
+    if "summary" in payload:
+        data["summary"] = {**data["summary"], **payload["summary"]}
     updated = AppConfig.model_validate(data)
     save_config(updated, request.app.state.config_path)
     request.app.state.config = updated
@@ -129,6 +133,7 @@ async def update_audio_settings(payload: dict, request: Request) -> dict:
     request.app.state.transcription_worker.service.config = updated
     request.app.state.summary_worker.config = updated
     request.app.state.summary_worker.service.config = updated
-    await request.app.state.receiver_manager.stop_all()
-    await request.app.state.receiver_manager.sync()
+    if updated.vox != current.vox:
+        await request.app.state.receiver_manager.stop_all()
+        await request.app.state.receiver_manager.sync()
     return public_config(updated)

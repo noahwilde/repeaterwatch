@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from app.config import AppConfig
 from app.db import Database
 from app.summarize.llm import (
+    SummaryService,
     SummaryWorker,
     build_summary_prompt,
     daily_activity_index,
@@ -145,7 +146,7 @@ def test_summary_worker_generates_scheduled_period_once(tmp_path):
     db = Database(tmp_path / "rw.sqlite3")
     try:
         repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
-        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        now = datetime(2026, 6, 21, 21, 49, tzinfo=UTC)
         _recording_with_transcript(
             db,
             repeater_id,
@@ -161,6 +162,8 @@ def test_summary_worker_generates_scheduled_period_once(tmp_path):
         config = AppConfig()
         config.summary.backend = "noop"
         config.summary.timezone = "UTC"
+        config.summary.scheduled_windows = ["quarter_hour", "hour"]
+        config.summary.per_repeater_scheduled = True
         worker = SummaryWorker(db, config)
 
         first = asyncio.run(worker.generate_rolling(now=now))
@@ -171,6 +174,88 @@ def test_summary_worker_generates_scheduled_period_once(tmp_path):
         assert second == []
         assert sorted(summary["window_name"] for summary in summaries) == ["hour", "hour", "quarter_hour", "quarter_hour"]
         assert all(summary["start_time"].endswith("+00:00") for summary in summaries)
+    finally:
+        db.close()
+
+
+def test_summary_worker_defaults_to_hourly_and_daily_without_per_repeater_duplicates(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        _recording_with_transcript(
+            db,
+            repeater_id,
+            datetime(2026, 6, 21, 20, 30, tzinfo=UTC),
+            "K0XYZ handled an hourly net check-in.",
+        )
+        _recording_with_transcript(
+            db,
+            repeater_id,
+            datetime(2026, 6, 21, 21, 35, tzinfo=UTC),
+            "K0ABC checked into the current quarter hour.",
+        )
+        config = AppConfig()
+        config.summary.backend = "noop"
+        config.summary.timezone = "UTC"
+        worker = SummaryWorker(db, config)
+
+        summary_ids = asyncio.run(worker.generate_rolling(now=now))
+        summaries = db.list_summaries(20)
+
+        assert len(summary_ids) == 1
+        assert [(summary["window_name"], summary["repeater_id"]) for summary in summaries] == [("hour", None)]
+    finally:
+        db.close()
+
+
+def test_summary_worker_can_disable_all_scheduled_windows(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        _recording_with_transcript(
+            db,
+            repeater_id,
+            datetime(2026, 6, 21, 20, 30, tzinfo=UTC),
+            "K0XYZ handled an hourly net check-in.",
+        )
+        config = AppConfig()
+        config.summary.backend = "noop"
+        config.summary.timezone = "UTC"
+        config.summary.scheduled_windows = []
+        worker = SummaryWorker(db, config)
+
+        summary_ids = asyncio.run(worker.generate_rolling(now=now))
+
+        assert summary_ids == []
+        assert db.list_summaries(20) == []
+    finally:
+        db.close()
+
+
+def test_automated_only_summary_skips_remote_model(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        _recording_with_transcript(
+            db,
+            repeater_id,
+            datetime(2026, 6, 21, 21, 35, tzinfo=UTC),
+            "K0RPT repeater Example City. Use tone 192.8.",
+        )
+        config = AppConfig()
+        config.summary.backend = "openai-compatible"
+        config.summary.timezone = "UTC"
+        selection = select_source_transcripts(db, "last_15_minutes", repeater_id=repeater_id, now=now)
+        service = SummaryService(db, config)
+
+        summary_id = asyncio.run(service.generate_from_selection(selection, repeater_id))
+        summary = db.get_summary(summary_id)
+
+        assert summary["status"] == "automated_only"
+        assert "automated/system repeater messages" in summary["text"]
     finally:
         db.close()
 

@@ -344,6 +344,9 @@ class TranscriptionService:
         if backend == "faster-whisper":
             return await asyncio.to_thread(self._faster_whisper_transcript, audio_path, recording)
         if backend == "openai-compatible":
+            short_result = self._short_recording_static_transcript(recording)
+            if short_result:
+                return short_result
             return await self._remote_transcript(audio_path, recording)
         raise ValueError(f"Unknown transcription backend: {backend}")
 
@@ -359,6 +362,25 @@ class TranscriptionService:
             confidence=None,
             low_confidence=True,
             backend="noop",
+            segments=[],
+        )
+
+    def _short_recording_static_transcript(self, recording: dict[str, Any] | None) -> TranscriptResult | None:
+        minimum_seconds = self.config.transcription.remote_min_duration_seconds
+        duration = _recording_duration_seconds(recording)
+        if minimum_seconds <= 0 or duration is None or duration >= minimum_seconds:
+            return None
+        logger.info(
+            "Skipping remote transcription for %.2fs recording below %.2fs minimum",
+            duration,
+            minimum_seconds,
+        )
+        return TranscriptResult(
+            text=STATIC_ONLY_TEXT,
+            original_text=STATIC_ONLY_TEXT,
+            confidence=None,
+            low_confidence=True,
+            backend="openai-compatible-skipped",
             segments=[],
         )
 

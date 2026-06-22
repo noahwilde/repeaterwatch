@@ -50,6 +50,7 @@ compute_type = "int8"
 remote_base_url = "https://api.openai.com/v1"
 remote_api_key_env = "OPENAI_API_KEY"
 remote_model = "whisper-1"
+remote_min_duration_seconds = 2.0
 poll_seconds = 5.0
 
 [summary]
@@ -60,6 +61,10 @@ api_key_env = "OPENAI_API_KEY"
 timezone = "local"
 prompt_version = "repeaterwatch-v6-scheduled-timeline"
 min_transcripts = 1
+scheduled_windows = ["hour", "day"]
+per_repeater_scheduled = false
+skip_automated_only = true
+schedule_delay_seconds = 120.0
 poll_seconds = 60.0
 
 [notifications]
