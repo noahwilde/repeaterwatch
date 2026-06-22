@@ -1382,8 +1382,8 @@ audio {
 
 @media (max-width: 840px) {
   main {
-    width: 100dvw;
-    max-width: 100dvw;
+    width: 100%;
+    max-width: 100%;
     padding: 10px 10px calc(86px + env(safe-area-inset-bottom));
   }
 
@@ -1471,8 +1471,8 @@ audio {
     z-index: 20;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    width: 100dvw;
-    max-width: 100dvw;
+    width: 100%;
+    max-width: 100%;
     gap: 4px;
     margin: 0;
     padding: 8px 8px calc(8px + env(safe-area-inset-bottom));

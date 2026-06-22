@@ -1,12 +1,30 @@
 # RepeaterWatch
 
-RepeaterWatch is a local-first Raspberry Pi web app for monitoring analog FM repeaters with an RTL-SDR dongle. It records active transmissions, keeps searchable transcripts, generates rolling summaries, and can send Web Push notifications for traffic you care about.
+RepeaterWatch is a local-first Raspberry Pi web app for monitoring analog FM repeaters with an RTL-SDR dongle. It records active transmissions, keeps searchable transcripts, generates rolling summaries, and can send Web Push notifications for configured traffic.
 
-It is designed to be useful on a small Pi install: FastAPI, SQLite, static PWA assets, and no Node build step.
+The application is FastAPI, SQLite, and static PWA assets. There is no Node build step.
 
-![RepeaterWatch home dashboard preview](docs/images/home-dashboard.svg)
+## Screenshots
 
-## What It Does
+These screenshots are captured from the running app with sanitized sample data.
+
+Desktop browser home page:
+
+![RepeaterWatch desktop home page](docs/images/desktop-home.png)
+
+Desktop browser transcript page:
+
+![RepeaterWatch desktop transcript page](docs/images/desktop-transcripts.png)
+
+Phone-width home page:
+
+![RepeaterWatch mobile home page](docs/images/mobile-home.png)
+
+Phone-width More page:
+
+![RepeaterWatch mobile More page](docs/images/mobile-more.png)
+
+## Functions
 
 - Monitors one analog FM repeater with `rtl_fm`, or multiple nearby repeaters from one shared RTL-SDR IQ stream.
 - Records active transmissions as WAV files with metadata.
@@ -18,21 +36,11 @@ It is designed to be useful on a small Pi install: FastAPI, SQLite, static PWA a
 - Sends standards-based Web Push notifications for keyword rules and non-automated traffic.
 - Runs as a local PWA on desktop or mobile, including iOS Home Screen web apps.
 
-## Screenshots
-
-The images below use sanitized sample data.
-
-![Transcript and summary timeline preview](docs/images/transcripts-and-summaries.svg)
-
-![Radio and settings preview](docs/images/radio-and-settings.svg)
-
-## How It Works
-
-![RepeaterWatch workflow diagram](docs/images/workflow.svg)
+## Data Flow
 
 RepeaterWatch listens to receiver audio, segments speech with a conservative VOX pipeline, stores recordings and metadata, then runs optional transcription, summary, and notification workers in the background.
 
-When one repeater is enabled, it uses the proven `rtl_fm` workflow. When multiple repeaters are enabled and `[sdr].multi_repeater_enabled = true`, it starts one `rtl_sdr` IQ source and channelizes each configured repeater in software. If the enabled repeaters do not fit inside the usable SDR passband, the receiver does not start and the UI shows the suggested center frequency and required sample rate.
+When one repeater is enabled, it uses the `rtl_fm` receiver path. When multiple repeaters are enabled and `[sdr].multi_repeater_enabled = true`, it starts one `rtl_sdr` IQ source and channelizes each configured repeater in software. If the enabled repeaters do not fit inside the usable SDR passband, the receiver does not start and the UI shows the suggested center frequency and required sample rate.
 
 ## Project Status
 
@@ -40,7 +48,7 @@ This project was built primarily with AI-generated code. It has automated tests 
 
 ## Hardware And Software
 
-Recommended hardware:
+Hardware:
 
 - Raspberry Pi 4 or newer.
 - RTL-SDR compatible dongle, such as an RTL-SDR Blog V4.
