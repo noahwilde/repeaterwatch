@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="RepeaterWatch icon">
+  <rect width="128" height="128" rx="24" fill="#24413a"/>
+  <circle cx="64" cy="64" r="10" fill="#f6f7f4"/>
+  <path d="M42 82c-10-10-10-26 0-36" fill="none" stroke="#f6f7f4" stroke-width="8" stroke-linecap="round"/>
+  <path d="M86 46c10 10 10 26 0 36" fill="none" stroke="#f6f7f4" stroke-width="8" stroke-linecap="round"/>
+  <path d="M28 96c-20-20-20-52 0-72" fill="none" stroke="#d9b56c" stroke-width="8" stroke-linecap="round"/>
+  <path d="M100 24c20 20 20 52 0 72" fill="none" stroke="#5db6a7" stroke-width="8" stroke-linecap="round"/>
+  <path d="M64 74v28" stroke="#f6f7f4" stroke-width="8" stroke-linecap="round"/>
+</svg>

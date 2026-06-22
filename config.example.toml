@@ -1,0 +1,77 @@
+[server]
+host = "0.0.0.0"
+port = 8078
+
+[storage]
+data_dir = "data"
+
+[sdr]
+multi_repeater_enabled = true
+sample_rate = 2400000
+guard_band_khz = 100.0
+edge_warning_khz = 50.0
+source_chunk_seconds = 0.25
+
+[[repeaters]]
+name = "Local 2m Repeater"
+frequency_mhz = 146.94
+offset_mhz = -0.6
+tone = "100.0"
+mode = "NFM"
+squelch_level = 50
+sample_rate = 24000
+gain = "auto"
+ppm = 0
+enabled = false
+
+[[scan_ranges]]
+name = "2m repeater outputs"
+start_mhz = 145.1
+end_mhz = 147.39
+channel_step_khz = 15.0
+dwell_seconds = 1.0
+squelch_threshold = 50
+enabled = false
+
+[vox]
+pre_roll_seconds = 1.0
+post_silence_seconds = 6.0
+min_duration_seconds = 1.0
+max_duration_seconds = 180.0
+threshold = 0.018
+sample_rate = 24000
+chunk_seconds = 0.25
+
+[transcription]
+backend = "noop"
+model = "base"
+language = "en"
+compute_type = "int8"
+remote_base_url = "https://api.openai.com/v1"
+remote_api_key_env = "OPENAI_API_KEY"
+remote_model = "whisper-1"
+poll_seconds = 5.0
+
+[summary]
+backend = "noop"
+model = "llama3.1"
+base_url = "http://localhost:11434"
+api_key_env = "OPENAI_API_KEY"
+timezone = "local"
+prompt_version = "repeaterwatch-v6-scheduled-timeline"
+min_transcripts = 1
+poll_seconds = 60.0
+
+[notifications]
+enabled = true
+vapid_public_key = ""
+vapid_private_key = ""
+subject = "mailto:admin@example.local"
+
+[retention]
+raw_audio_days = 30
+transcripts_days = 365
+summaries_days = 365
+transcript_display_limit = 100
+summary_display_limit = 200
+delete_metadata_without_summary = false

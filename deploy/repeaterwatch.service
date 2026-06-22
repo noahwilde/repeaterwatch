@@ -1,0 +1,18 @@
+[Unit]
+Description=RepeaterWatch RTL-SDR repeater monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=repeaterwatch
+Group=repeaterwatch
+WorkingDirectory=/opt/repeaterwatch
+Environment=REPEATERWATCH_CONFIG=/etc/repeaterwatch/config.toml
+ExecStart=/opt/repeaterwatch/.venv/bin/repeaterwatch serve --config /etc/repeaterwatch/config.toml
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

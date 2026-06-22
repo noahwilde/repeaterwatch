@@ -1,0 +1,42 @@
+# Local configuration and secrets
+config.toml
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+
+# Runtime data
+data/
+recordings/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.log
+
+# Local screenshots and scratch assets
+/mobile-home*.png
+
+# Python/build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Editor/OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from app.config import AppConfig, RepeaterConfig, ScanRangeConfig, SdrConfig, VoxConfig, default_config, load_config, save_config
+
+
+def test_config_roundtrip(tmp_path):
+    path = tmp_path / "config.toml"
+    config = default_config()
+    save_config(config, path)
+
+    loaded = load_config(path)
+
+    assert loaded.server.port == 8078
+    assert loaded.repeaters[0].name == "Example 2m Repeater"
+
+
+def test_repeater_frequency_and_sample_rate_validation():
+    with pytest.raises(ValidationError):
+        RepeaterConfig(name="bad", frequency_mhz=2.0)
+
+    with pytest.raises(ValidationError):
+        RepeaterConfig(name="bad", frequency_mhz=146.94, sample_rate=3_000_000)
+
+
+def test_repeater_new_frequency_aliases_load():
+    repeater = RepeaterConfig.model_validate(
+        {
+            "name": "Example City 146.745",
+            "receive_frequency": 146.745,
+            "transmit_frequency": 146.145,
+            "ctcss_tone": "192.8",
+            "location": "Example City, IA",
+            "coverage_area": "Linn County",
+            "repeater_type": "general",
+        }
+    )
+
+    assert repeater.frequency_mhz == 146.745
+    assert repeater.transmit_frequency_mhz == 146.145
+    assert repeater.tone == "192.8"
+    assert repeater.location == "Example City, IA"
+
+
+def test_sdr_config_defaults_use_wide_v4_bandwidth():
+    config = SdrConfig()
+
+    assert config.multi_repeater_enabled is True
+    assert config.sample_rate == 2_400_000
+    assert config.guard_band_khz == 100.0
+
+
+def test_vox_default_hang_time_keeps_short_gaps_together():
+    config = VoxConfig()
+
+    assert config.post_silence_seconds == 6.0
+
+
+def test_duplicate_repeater_names_rejected():
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(
+            {
+                "repeaters": [
+                    {"name": "Local", "frequency_mhz": 146.94},
+                    {"name": "local", "frequency_mhz": 147.0},
+                ]
+            }
+        )
+
+
+def test_scan_range_validation():
+    with pytest.raises(ValidationError):
+        ScanRangeConfig(name="bad", start_mhz=147.0, end_mhz=146.0)

@@ -1,0 +1,7 @@
+repeaterwatch.local {
+    reverse_proxy 127.0.0.1:8078
+    tls internal
+}
+
+# For a LAN IP without local DNS, replace repeaterwatch.local with the Pi hostname
+# or use Caddy's local CA and trust it on each device.

@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#24413a" />
+    <script>
+      (() => {
+        try {
+          if (window.localStorage.getItem("repeaterwatch.theme") === "dark") {
+            document.documentElement.dataset.theme = "dark";
+            const themeColor = document.querySelector("meta[name='theme-color']");
+            if (themeColor) themeColor.setAttribute("content", "#101f1c");
+          }
+        } catch {}
+      })();
+    </script>
+    <title>RepeaterWatch</title>
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/icons/repeaterwatch.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="pullRefresh" class="pull-refresh" role="status" aria-live="polite">
+      <span class="pull-refresh-spinner" aria-hidden="true"></span>
+      <span class="sr-only">Pull to refresh</span>
+    </div>
+
+    <main>
+      <section id="installPanel" class="notice"></section>
+
+      <nav id="viewTabs" class="view-tabs" aria-label="RepeaterWatch sections">
+        <button type="button" data-view-tab="monitor" aria-label="Home">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.7 12 3l9 7.7v9.8h-6v-6h-6v6H3z" /></svg>
+          <span class="tab-label">Home</span>
+        </button>
+        <button type="button" data-view-tab="transcripts" aria-label="Transcripts">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zm3 4h8V6H8zm0 4h8v-2H8zm0 4h6v-2H8z" /></svg>
+          <span class="tab-label">Transcript</span>
+        </button>
+        <button type="button" data-view-tab="summaries" aria-label="Summaries">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v3H5zm0 5h14v2H5zm0 4h10v2H5zm0 4h8v2H5z" /></svg>
+          <span class="tab-label">Summary</span>
+        </button>
+        <button type="button" data-view-tab="more" aria-label="More">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v2H4zm0 4h16v2H4zm0 4h16v2H4z" /></svg>
+          <span class="tab-label">More</span>
+        </button>
+      </nav>
+
+      <section class="home-screen view-section" data-view="monitor" aria-label="System overview">
+        <div class="metrics glance-metrics">
+          <div>
+            <span class="metric-label">Receivers</span>
+            <strong id="metricReceivers">0</strong>
+          </div>
+          <div>
+            <span class="metric-label">Recordings</span>
+            <strong id="metricRecordings">0</strong>
+          </div>
+          <div>
+            <span class="metric-label">Rules</span>
+            <strong id="metricRules">0</strong>
+          </div>
+          <div>
+            <span class="metric-label">Disk used</span>
+            <strong id="metricDisk">0 B</strong>
+          </div>
+        </div>
+        <div class="home-controls">
+          <label>
+            <span>Activity Range</span>
+            <select id="activityRange" name="activity_range" aria-label="Activity range">
+              <option value="1">1 hour</option>
+              <option value="6">6 hours</option>
+              <option value="12">12 hours</option>
+              <option value="24" selected>24 hours</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+            </select>
+          </label>
+        </div>
+        <div id="homeGlance" class="glance-grid"></div>
+      </section>
+
+      <div class="layout">
+        <section class="panel view-section monitor-detail" data-view="monitor">
+          <div class="panel-head">
+            <h2>Receivers</h2>
+          </div>
+          <div id="receiverStatus" class="stack"></div>
+        </section>
+
+        <section class="panel wide view-section monitor-detail" data-view="monitor">
+          <div class="panel-head">
+            <h2>Activity</h2>
+            <span id="activityWindow" class="pill">Last 24 hours</span>
+          </div>
+          <div id="activityChart" class="activity-chart"></div>
+        </section>
+
+        <details class="panel view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>Repeater Configuration</h2>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <form id="repeaterForm" class="form-grid">
+              <label>
+                <span>Name</span>
+                <input name="name" required placeholder="Local 2m" />
+              </label>
+              <label>
+                <span>Frequency MHz</span>
+                <input name="frequency_mhz" required type="number" step="0.000001" min="24" max="1766" placeholder="146.940" />
+              </label>
+              <label>
+                <span>Transmit MHz</span>
+                <input name="transmit_frequency_mhz" type="number" step="0.000001" min="24" max="1766" placeholder="146.340" />
+              </label>
+              <label>
+                <span>Tone</span>
+                <input name="tone" placeholder="100.0" />
+              </label>
+              <label>
+                <span>Squelch</span>
+                <input name="squelch_level" type="number" min="0" max="200" value="50" />
+              </label>
+              <label>
+                <span>Sample rate</span>
+                <input name="sample_rate" type="number" min="8000" value="24000" />
+              </label>
+              <label>
+                <span>Gain</span>
+                <input name="gain" value="auto" />
+              </label>
+              <label>
+                <span>PPM</span>
+                <input name="ppm" type="number" min="-200" max="200" value="0" />
+              </label>
+              <label>
+                <span>Location</span>
+                <input name="location" placeholder="Example City, ST" />
+              </label>
+              <label>
+                <span>Coverage</span>
+                <input name="coverage_area" placeholder="Linn County" />
+              </label>
+              <label>
+                <span>Type</span>
+                <input name="repeater_type" placeholder="general, weather, ARES" />
+              </label>
+              <label>
+                <span>Notes</span>
+                <input name="notes" />
+              </label>
+              <label class="check">
+                <input name="enabled" type="checkbox" checked />
+                <span>Enabled</span>
+              </label>
+              <button type="submit">Add repeater</button>
+            </form>
+            <p id="repeaterStatus" class="muted form-status" aria-live="polite"></p>
+            <div id="repeaters" class="stack"></div>
+          </div>
+        </details>
+
+        <details class="panel wide view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>SDR Window</h2>
+            <span id="sdrWindowStatus" class="pill">Checking</span>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <div id="sdrWindow" class="sdr-window"></div>
+          </div>
+        </details>
+
+        <section class="panel wide view-section" data-view="transcripts">
+          <div class="panel-head">
+            <h2>Transcripts</h2>
+            <div class="item-actions">
+              <button id="clearStaticRecordingsBtn" class="secondary" type="button">Clear static only</button>
+              <button id="clearRecordingsBtn" class="danger" type="button">Clear</button>
+            </div>
+          </div>
+          <form id="transcriptSearchForm" class="transcript-search" role="search">
+            <label>
+              <span>Search transcripts</span>
+              <input id="transcriptSearch" name="transcript_search" type="search" placeholder="Callsign, keyword, repeater, phrase" autocomplete="off" />
+            </label>
+            <button id="clearTranscriptSearchBtn" class="secondary" type="button">Clear search</button>
+          </form>
+          <p id="transcriptSearchStatus" class="muted form-status" aria-live="polite"></p>
+          <p id="recordingStatus" class="muted form-status" aria-live="polite"></p>
+          <div id="recordings" class="stack"></div>
+        </section>
+
+        <details class="panel wide view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>Live Squelch Test</h2>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <form id="liveTestForm" class="form-grid">
+              <label>
+                <span>Frequency MHz</span>
+                <input name="frequency_mhz" required type="number" step="0.000001" min="24" max="1766" value="146.745" />
+              </label>
+              <label>
+                <span>Squelch</span>
+                <input name="squelch_level" type="number" min="0" max="200" value="0" />
+              </label>
+              <label>
+                <span>Gain</span>
+                <input name="gain" value="auto" />
+              </label>
+              <label>
+                <span>PPM</span>
+                <input name="ppm" type="number" min="-200" max="200" value="0" />
+              </label>
+              <label>
+                <span>Sample rate</span>
+                <input name="sample_rate" type="number" min="8000" value="24000" />
+              </label>
+              <div class="button-row">
+                <button id="startLiveBtn" type="submit">Start live</button>
+                <button id="stopLiveBtn" class="secondary" type="button" disabled>Stop</button>
+              </div>
+            </form>
+            <div class="meter" aria-label="Live audio level">
+              <div id="liveLevelBar" class="meter-fill"></div>
+            </div>
+            <div class="meta">
+              <span id="liveLevelText" class="pill">level 0.000</span>
+              <span id="liveActiveText" class="pill">idle</span>
+            </div>
+            <p id="liveStatus" class="muted">Use squelch 0 to hear raw noise. Use the receiver squelch value only when testing whether it stays quiet at idle.</p>
+          </div>
+        </details>
+
+        <section class="panel wide view-section" data-view="summaries">
+          <div class="panel-head">
+            <h2>Summaries</h2>
+            <button id="clearSummariesBtn" class="danger" type="button">Clear</button>
+          </div>
+          <div id="summaryStats" class="summary-stats"></div>
+          <div class="summary-workspace">
+            <form id="summaryForm" class="summary-generate">
+              <div>
+                <span class="field-label">Window</span>
+                <div class="segmented" role="radiogroup" aria-label="Summary window">
+                  <label>
+                    <input name="window_name" type="radio" value="quarter_hour" checked />
+                    <span>15 min</span>
+                  </label>
+                  <label>
+                    <input name="window_name" type="radio" value="hour" />
+                    <span>Hour</span>
+                  </label>
+                  <label>
+                    <input name="window_name" type="radio" value="day" />
+                    <span>Day</span>
+                  </label>
+                </div>
+              </div>
+              <label>
+                <span>Scope</span>
+                <select id="summaryRepeater" name="repeater_id">
+                  <option value="">All repeaters</option>
+                </select>
+              </label>
+              <button type="submit">Generate</button>
+            </form>
+            <form id="summarySearchForm" class="transcript-search" role="search">
+              <label>
+                <span>Search summaries</span>
+                <input id="summarySearch" name="summary_search" type="search" placeholder="Callsign, keyword, net, phrase" autocomplete="off" />
+              </label>
+              <button id="clearSummarySearchBtn" class="secondary" type="button">Clear</button>
+            </form>
+            <p id="summarySearchStatus" class="muted form-status" aria-live="polite"></p>
+            <p id="summaryStatus" class="muted"></p>
+            <div id="adHocSummary" class="summary-ad-hoc" hidden></div>
+            <div id="summaries" class="summary-list"></div>
+          </div>
+        </section>
+
+        <details class="panel view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>Keyword Notifications</h2>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <form id="trafficAlertForm" class="form-grid">
+              <label class="check">
+                <input name="enabled" type="checkbox" />
+                <span>Non-automated transcript alerts</span>
+              </label>
+              <label class="wide-field">
+                <span>Suppress alert phrases</span>
+                <textarea name="suppress_phrases" rows="4" placeholder="Repeater ID only&#10;Use tone 100.0"></textarea>
+              </label>
+              <button type="submit">Save alerts</button>
+            </form>
+            <p id="trafficAlertStatus" class="muted form-status" aria-live="polite"></p>
+            <form id="ruleForm" class="form-grid">
+              <label>
+                <span>Keyword or regex</span>
+                <input name="keyword" required placeholder="weather" />
+              </label>
+              <label>
+                <span>Cooldown minutes</span>
+                <input name="cooldown_minutes" type="number" min="0" value="10" />
+              </label>
+              <label class="check">
+                <input name="is_regex" type="checkbox" />
+                <span>Regex</span>
+              </label>
+              <label class="check">
+                <input name="case_sensitive" type="checkbox" />
+                <span>Case sensitive</span>
+              </label>
+              <label class="check">
+                <input name="notify_transcript" type="checkbox" checked />
+                <span>Transcript alerts</span>
+              </label>
+              <label class="check">
+                <input name="notify_summary" type="checkbox" />
+                <span>Summary alerts</span>
+              </label>
+              <button type="submit">Add rule</button>
+            </form>
+            <p id="ruleStatus" class="muted form-status" aria-live="polite"></p>
+            <div class="inline-form">
+              <button id="enablePushBtn" type="button">Enable notifications</button>
+              <button id="testPushBtn" type="button">Test</button>
+            </div>
+            <p id="pushStatus" class="muted"></p>
+            <div id="rules" class="stack"></div>
+          </div>
+        </details>
+
+        <details class="panel view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>Notification History</h2>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <button id="clearEventsBtn" class="danger" type="button">Clear history</button>
+            <div id="events" class="stack"></div>
+          </div>
+        </details>
+
+        <details class="panel view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>Display</h2>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <form id="displaySettingsForm" class="form-grid">
+              <label class="wide-field">
+                <span>Text size</span>
+                <div class="range-row">
+                  <input id="textSize" name="text_size" type="range" min="85" max="125" step="5" value="100" />
+                  <output id="textSizeValue" for="textSize">100%</output>
+                </div>
+              </label>
+              <label class="check wide-field theme-toggle">
+                <span>Dark mode</span>
+                <input id="darkMode" name="dark_mode" type="checkbox" />
+              </label>
+              <div class="button-row">
+                <button type="submit">Save display</button>
+                <button id="resetTextSizeBtn" class="secondary" type="button">Reset text</button>
+              </div>
+            </form>
+            <p id="displaySettingsStatus" class="muted form-status" aria-live="polite"></p>
+          </div>
+        </details>
+
+        <details class="panel wide view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>Logs</h2>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <div class="item-actions">
+              <select id="logLimit" aria-label="Log line count">
+                <option value="100">100 lines</option>
+                <option value="200" selected>200 lines</option>
+                <option value="500">500 lines</option>
+                <option value="1000">1000 lines</option>
+              </select>
+              <button id="refreshLogsBtn" type="button">Refresh logs</button>
+            </div>
+            <p id="logStatus" class="muted"></p>
+            <pre id="logs" class="log-output" aria-label="RepeaterWatch service logs"></pre>
+          </div>
+        </details>
+
+        <details class="panel view-section collapsible-panel" data-view="more">
+          <summary class="panel-head collapsible-head">
+            <h2>Audio and Retention</h2>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="panel-body">
+            <form id="settingsForm" class="form-grid">
+              <label>
+                <span>VOX threshold</span>
+                <input name="threshold" type="number" min="0.001" max="1" step="0.001" />
+              </label>
+              <label>
+                <span>Pre-roll seconds</span>
+                <input name="pre_roll_seconds" type="number" min="0" max="10" step="0.1" />
+              </label>
+              <label>
+                <span>Post-silence seconds</span>
+                <input name="post_silence_seconds" type="number" min="0.1" max="30" step="0.1" />
+              </label>
+              <label>
+                <span>Minimum seconds</span>
+                <input name="min_duration_seconds" type="number" min="0.1" max="60" step="0.1" />
+              </label>
+              <label>
+                <span>Maximum seconds</span>
+                <input name="max_duration_seconds" type="number" min="5" max="3600" step="1" />
+              </label>
+              <label>
+                <span>Raw audio days</span>
+                <input name="raw_audio_days" type="number" min="1" step="1" />
+              </label>
+              <label>
+                <span>Transcript days</span>
+                <input name="transcripts_days" type="number" min="1" step="1" />
+              </label>
+              <label>
+                <span>Summary days</span>
+                <input name="summaries_days" type="number" min="1" step="1" />
+              </label>
+              <label>
+                <span>Transcript display count</span>
+                <input name="transcript_display_limit" type="number" min="1" max="1000" step="1" />
+              </label>
+              <label>
+                <span>Summary display count</span>
+                <input name="summary_display_limit" type="number" min="1" max="2000" step="1" />
+              </label>
+              <button type="submit">Save settings</button>
+            </form>
+            <p id="settingsStatus" class="muted form-status" aria-live="polite"></p>
+          </div>
+        </details>
+      </div>
+    </main>
+
+    <div id="callsignModal" class="modal" hidden>
+      <button class="modal-backdrop" data-close-callsign type="button" aria-label="Close callsign lookup"></button>
+      <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="callsignTitle">
+        <div class="panel-head">
+          <h2 id="callsignTitle">Callsign</h2>
+          <button class="secondary" data-close-callsign type="button">Close</button>
+        </div>
+        <div id="callsignDetails" class="callsign-details"></div>
+      </section>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
