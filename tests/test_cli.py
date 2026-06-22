@@ -35,6 +35,13 @@ def test_serve_ssl_arguments():
     assert args.ssl_keyfile == "/etc/repeaterwatch/tls/server.key"
 
 
+def test_config_argument_before_serve_subcommand():
+    args = build_parser().parse_args(["--config", "/etc/repeaterwatch/config.toml", "serve"])
+
+    assert args.config == "/etc/repeaterwatch/config.toml"
+    assert args.command == "serve"
+
+
 def test_listen_sdr_command_parse():
     args = build_parser().parse_args(
         ["listen-sdr", "--config", "/tmp/rw.toml", "--frequency", "146.745M", "--squelch", "0", "--gain", "20"]

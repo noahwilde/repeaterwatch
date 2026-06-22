@@ -9,7 +9,7 @@ User=repeaterwatch
 Group=repeaterwatch
 WorkingDirectory=/opt/repeaterwatch
 Environment=REPEATERWATCH_CONFIG=/etc/repeaterwatch/config.toml
-ExecStart=/opt/repeaterwatch/.venv/bin/repeaterwatch serve --config /etc/repeaterwatch/config.toml
+ExecStart=/opt/repeaterwatch/.venv/bin/repeaterwatch --config /etc/repeaterwatch/config.toml serve
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true

@@ -1,75 +1,151 @@
 # RepeaterWatch
 
-RepeaterWatch is a local-first Raspberry Pi web app for monitoring analog FM repeaters with an RTL-SDR dongle. It records active transmissions, stores raw audio, transcribes recordings, generates rolling summaries, and sends standards-based Web Push notifications for keyword matches.
+RepeaterWatch is a local-first Raspberry Pi web app for monitoring analog FM repeaters with an RTL-SDR dongle. It records active transmissions, keeps searchable transcripts, generates rolling summaries, and can send Web Push notifications for traffic you care about.
 
-The UI is a plain FastAPI-served PWA, so there is no Node build step on the Pi.
+It is designed to be useful on a small Pi install: FastAPI, SQLite, static PWA assets, and no Node build step.
 
-## AI-Generated Code Notice
+![RepeaterWatch home dashboard preview](docs/images/home-dashboard.svg)
+
+## What It Does
+
+- Monitors one analog FM repeater with `rtl_fm`, or multiple nearby repeaters from one shared RTL-SDR IQ stream.
+- Records active transmissions as WAV files with metadata.
+- Keeps repeater courtesy tones and short pauses attached to the same recording instead of creating beep-only clips.
+- Transcribes recordings with `noop`, local `faster-whisper`, or an OpenAI-compatible transcription API.
+- Normalizes common ham-radio callsign speech such as "kilo zero xray yankee zulu" into `K0XYZ`.
+- Generates scheduled summaries for 15-minute, hourly, and daily windows.
+- Shows transcripts and summaries as searchable timelines.
+- Sends standards-based Web Push notifications for keyword rules and non-automated traffic.
+- Runs as a local PWA on desktop or mobile, including iOS Home Screen web apps.
+
+## Screenshots
+
+The images below use sanitized sample data.
+
+![Transcript and summary timeline preview](docs/images/transcripts-and-summaries.svg)
+
+![Radio and settings preview](docs/images/radio-and-settings.svg)
+
+## How It Works
+
+![RepeaterWatch workflow diagram](docs/images/workflow.svg)
+
+RepeaterWatch listens to receiver audio, segments speech with a conservative VOX pipeline, stores recordings and metadata, then runs optional transcription, summary, and notification workers in the background.
+
+When one repeater is enabled, it uses the proven `rtl_fm` workflow. When multiple repeaters are enabled and `[sdr].multi_repeater_enabled = true`, it starts one `rtl_sdr` IQ source and channelizes each configured repeater in software. If the enabled repeaters do not fit inside the usable SDR passband, the receiver does not start and the UI shows the suggested center frequency and required sample rate.
+
+## Project Status
 
 This project was built primarily with AI-generated code. It has automated tests and has been exercised on a local Raspberry Pi deployment, but it should still be reviewed carefully before relying on it for unattended or production use.
 
-## Secrets And Local Data
+## Hardware And Software
 
-Do not commit a live `config.toml`, `.env` file, VAPID private key, TLS private key, API key, SQLite database, or captured audio. The repository includes `config.example.toml` as a safe starting point, and `.gitignore` excludes local runtime config, keys, databases, recordings, caches, and build artifacts.
+Recommended hardware:
 
-API credentials should be supplied through environment variables such as `OPENAI_API_KEY`. Web Push VAPID keys can be generated with `repeaterwatch generate-vapid`; keep the private key in `/etc/repeaterwatch/config.toml` or `REPEATERWATCH_VAPID_PRIVATE_KEY`, not in source control.
+- Raspberry Pi 4 or newer.
+- RTL-SDR compatible dongle, such as an RTL-SDR Blog V4.
+- Antenna appropriate for the repeater band.
+- Optional powered USB hub if the SDR is unstable.
 
-## Current Capabilities
+System packages:
 
-- FastAPI backend with SQLite persistence.
-- Static responsive PWA with manifest, service worker, iOS Home Screen onboarding, and notification subscription UI.
-- Configurable repeater list from `config.toml` and the web UI, including inline edits for existing entries.
-- Single-repeater `rtl_fm` receiver backend with crash restart and backoff.
-- Shared RTL-SDR IQ receiver for multiple enabled repeaters that fit inside one usable passband.
-- SDR window validation with center-frequency recommendations, guard bands, and per-repeater in-range status.
-- Conservative PCM16 VOX segmenter with pre-roll, post-silence, minimum duration, and maximum split duration.
-- WAV recording storage with metadata.
-- Transcription worker with `noop`, `faster-whisper`, and OpenAI-compatible modes.
-- Conservative summary worker with `noop`, OpenAI-compatible, and Ollama-compatible modes.
-- Keyword phrase or regex rules with cooldowns and repeater filters.
-- Web Push subscriptions and VAPID key generation.
-- Retention cleanup that can delete raw audio while preserving metadata by default.
+- `rtl-sdr`
+- `sox`
+- `ffmpeg`
+- Python 3.11 or newer with `venv`
+- `git`
 
-When one repeater is enabled, RepeaterWatch keeps the proven `rtl_fm` workflow. When multiple repeaters are enabled and `[sdr].multi_repeater_enabled = true`, it starts one `rtl_sdr` IQ source and channelizes each repeater in software. If the enabled repeaters do not fit inside the usable SDR passband, the receiver is not started and the UI shows the suggested center frequency and required sample rate.
+## Quick Start On Raspberry Pi OS
 
-## Install On Raspberry Pi OS
+Install system packages and create a service user:
 
 ```bash
 sudo apt update
-sudo apt install -y rtl-sdr sox ffmpeg python3.13 python3.13-venv git
-sudo useradd --system --create-home --groups plugdev repeaterwatch
-sudo mkdir -p /opt/repeaterwatch /etc/repeaterwatch
+sudo apt install -y rtl-sdr sox ffmpeg python3 python3-venv git
+id -u repeaterwatch >/dev/null 2>&1 || sudo useradd --system --create-home --groups plugdev repeaterwatch
+sudo mkdir -p /etc/repeaterwatch
 ```
 
-Copy this project to `/opt/repeaterwatch`, then install it:
+Clone and install RepeaterWatch:
 
 ```bash
+sudo git clone https://github.com/noahwilde/repeaterwatch.git /opt/repeaterwatch
 cd /opt/repeaterwatch
-sudo rm -rf repeaterwatch.egg-info build dist
 sudo chown -R repeaterwatch:repeaterwatch /opt/repeaterwatch /etc/repeaterwatch
-sudo -u repeaterwatch python3.13 -m venv .venv
+sudo -u repeaterwatch python3 -m venv .venv
 sudo -u repeaterwatch .venv/bin/pip install --upgrade pip
 sudo -u repeaterwatch .venv/bin/pip install -e '.[transcribe]'
-sudo -u repeaterwatch .venv/bin/repeaterwatch init-config --config /etc/repeaterwatch/config.toml
+sudo -u repeaterwatch .venv/bin/repeaterwatch --config /etc/repeaterwatch/config.toml init-config
 ```
 
-Generate Web Push keys and paste the printed `[notifications]` values into `/etc/repeaterwatch/config.toml`:
+Edit `/etc/repeaterwatch/config.toml` and add at least one repeater. Then run the app:
 
 ```bash
-sudo -u repeaterwatch .venv/bin/repeaterwatch generate-vapid
+sudo -u repeaterwatch .venv/bin/repeaterwatch --config /etc/repeaterwatch/config.toml serve
 ```
 
-Run it directly:
+Open:
+
+```text
+http://<pi-hostname-or-ip>:8078
+```
+
+## Configuration
+
+The included `config.example.toml` is a safe starting point. A normal Pi install keeps runtime configuration in `/etc/repeaterwatch/config.toml`.
+
+With the default `[storage] data_dir = "data"`, data is stored relative to the config file. For the Pi layout above, recordings and the SQLite database live under:
+
+```text
+/etc/repeaterwatch/data
+```
+
+That keeps captured audio, transcripts, summaries, and local settings separate from the application code in `/opt/repeaterwatch`.
+
+API-backed transcription and summaries use environment variable names from the config, not key values:
+
+```toml
+[transcription]
+backend = "openai-compatible"
+remote_base_url = "https://api.openai.com/v1"
+remote_api_key_env = "OPENAI_API_KEY"
+remote_model = "gpt-4o-transcribe"
+
+[summary]
+backend = "openai-compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4.1-mini"
+```
+
+For local-only operation, leave both backends as `noop` or use `faster-whisper` for transcription and Ollama for summaries.
+
+## Web Push Notifications
+
+Web Push requires VAPID keys. Generate them once:
 
 ```bash
-sudo -u repeaterwatch .venv/bin/repeaterwatch serve --config /etc/repeaterwatch/config.toml
+sudo -u repeaterwatch /opt/repeaterwatch/.venv/bin/repeaterwatch generate-vapid
 ```
 
-Open `http://<pi-hostname>:8078`.
+Paste the printed `[notifications]` values into `/etc/repeaterwatch/config.toml`. The private key can also be supplied with `REPEATERWATCH_VAPID_PRIVATE_KEY`.
+
+iOS/iPadOS Web Push requires all of these:
+
+- iOS/iPadOS 16.4 or newer.
+- An HTTPS URL with a trusted certificate.
+- A Home Screen web app. Open the HTTPS URL in Safari, use Share > Add to Home Screen, then reopen RepeaterWatch from the Home Screen icon before enabling notifications.
+
+The permission request is only made after the user presses the enable button.
+
+References:
+
+- [Apple: Sending web push notifications in web apps and browsers](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)
+- [WebKit: Web Push for Web Apps on iOS and iPadOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)
 
 ## HTTPS
 
-Web Push requires a secure context. To serve RepeaterWatch directly over HTTPS, configure the server with a certificate and private key:
+Plain LAN HTTP is not a secure context for iOS Web Push. To serve RepeaterWatch directly over HTTPS, configure the server with a certificate and private key:
 
 ```toml
 [server]
@@ -79,12 +155,18 @@ ssl_certfile = "/etc/repeaterwatch/tls/server.crt"
 ssl_keyfile = "/etc/repeaterwatch/tls/server.key"
 ```
 
-For a LAN-only install, generate a local CA and a server certificate with subject alternative names for the Pi IP address and hostname. Install and fully trust the local CA certificate on each iPhone/iPad before opening `https://<pi-hostname-or-ip>:8443`.
+For a LAN-only install, generate a local CA and a server certificate with subject alternative names for the Pi IP address and hostname. Install and fully trust the local CA certificate on each iPhone/iPad before opening:
 
-## systemd
+```text
+https://<pi-hostname-or-ip>:8443
+```
+
+You can also run RepeaterWatch behind Caddy; adapt `deploy/Caddyfile.example` for your hostname.
+
+## Run With systemd
 
 ```bash
-sudo cp deploy/repeaterwatch.service /etc/systemd/system/repeaterwatch.service
+sudo cp /opt/repeaterwatch/deploy/repeaterwatch.service /etc/systemd/system/repeaterwatch.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now repeaterwatch
 sudo journalctl -u repeaterwatch -f
@@ -92,7 +174,7 @@ sudo journalctl -u repeaterwatch -f
 
 The default service runs as user `repeaterwatch`, uses `/etc/repeaterwatch/config.toml`, and serves on `0.0.0.0:8078`.
 
-## RTL-SDR Permissions
+## RTL-SDR Setup
 
 If the dongle is claimed by the DVB driver, blacklist it:
 
@@ -111,14 +193,18 @@ sudo udevadm trigger
 Test the receiver path:
 
 ```bash
-repeaterwatch test-sdr --config /etc/repeaterwatch/config.toml --frequency 146.940M
+sudo -u repeaterwatch /opt/repeaterwatch/.venv/bin/repeaterwatch \
+  --config /etc/repeaterwatch/config.toml \
+  test-sdr \
+  --frequency 146.940M
 ```
 
 Live listen while tuning squelch:
 
 ```bash
-sudo -u repeaterwatch .venv/bin/repeaterwatch listen-sdr \
+sudo -u repeaterwatch /opt/repeaterwatch/.venv/bin/repeaterwatch \
   --config /etc/repeaterwatch/config.toml \
+  listen-sdr \
   --frequency 146.745M \
   --gain 20 \
   --squelch 0
@@ -126,11 +212,9 @@ sudo -u repeaterwatch .venv/bin/repeaterwatch listen-sdr \
 
 Use `--squelch 0` to hear the raw noise floor first, then raise squelch until idle noise stops. Try `--squelch 40`, `60`, `80`, and `100`. If squelch has to be very high, try lower fixed gain values such as `--gain 10` or `--gain 20` instead of `auto`.
 
-The web UI also includes **Live Squelch Test**, which plays a temporary receiver stream in the browser and shows the level RepeaterWatch uses for VOX decisions. Normal RepeaterWatch receivers are paused while the live web test is active, then resumed when it stops.
+The web UI also includes a live squelch test under More. Normal RepeaterWatch receivers are paused while the live web test is active, then resumed when it stops.
 
 ## Multi-Repeater Monitoring
-
-RepeaterWatch can monitor multiple enabled repeaters from one RTL-SDR when their receive frequencies fit inside the configured SDR sample rate after guard bands.
 
 Recommended defaults:
 
@@ -170,7 +254,7 @@ repeater_type = "weather"
 enabled = true
 ```
 
-The Radio tab shows the current SDR center frequency, sample rate, usable edges, and repeater markers:
+The SDR window panel under More shows the current center frequency, sample rate, usable edges, and repeater markers:
 
 - Green: inside the usable passband.
 - Yellow: near the guard-band edge.
@@ -189,7 +273,7 @@ Known limitations:
 
 RepeaterWatch keeps a recording open until VOX sees `post_silence_seconds` of quiet audio. The default is `6.0` seconds, so short pauses, repeater courtesy tones, and squelch tails stay attached to the preceding transmission instead of creating separate beep-only recordings.
 
-## Transcription
+## Transcription And Summaries
 
 Default transcription mode is `noop`, which preserves the workflow without running speech-to-text. For local transcription:
 
@@ -202,20 +286,6 @@ compute_type = "int8"
 
 Larger Whisper models improve accuracy but are slower on Raspberry Pi hardware. Ham callsigns may still be misrecognized; RepeaterWatch stores the original transcript and supports corrections from the API/UI path.
 
-OpenAI-compatible transcription can be configured with:
-
-```toml
-[transcription]
-backend = "openai-compatible"
-remote_base_url = "https://api.openai.com/v1"
-remote_api_key_env = "OPENAI_API_KEY"
-remote_model = "gpt-4o-transcribe"
-```
-
-RepeaterWatch sends the repeater name, frequency, tone, optional location, coverage area, type, notes, and known repeater callsign as transcription context. For OpenAI-compatible transcription, it also applies a voice-band cleanup pass with `ffmpeg` before upload when `ffmpeg` is available. This improves automated repeater IDs and helps the transcript mark static-only or unintelligible recordings conservatively.
-
-## Summaries
-
 Default summary mode is `noop`, which creates a local extractive summary and never invents callsigns. For Ollama:
 
 ```toml
@@ -225,60 +295,54 @@ base_url = "http://localhost:11434"
 model = "llama3.1"
 ```
 
-For an OpenAI-compatible chat API:
-
-```toml
-[summary]
-backend = "openai-compatible"
-base_url = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"
-model = "gpt-4.1-mini"
-```
-
 AI summaries receive trusted receiver context for each transcript, including repeater name, frequency, tone, optional location, coverage area, type, and notes. Combined summaries preserve the source repeater metadata for each transcript and should not merge unrelated traffic unless the transcripts clearly support correlation.
 
-## iOS Web Push
+## CLI Reference
 
-iOS/iPadOS Web Push requires all of these:
-
-- iOS/iPadOS 16.4 or newer.
-- An HTTPS URL with a trusted certificate. Plain LAN HTTP such as `http://<pi-hostname-or-ip>:8078` is not a secure context, so iOS will not expose Service Worker/Web Push APIs.
-- A Home Screen web app. Open the HTTPS URL in Safari, use Share > Add to Home Screen, then reopen RepeaterWatch from the Home Screen icon before enabling notifications.
-
-The permission request is only made after the user presses the enable button.
-
-References:
-
-- [Apple: Sending web push notifications in web apps and browsers](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)
-- [WebKit: Web Push for Web Apps on iOS and iPadOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)
-
-Web Push usually requires HTTPS except for localhost. For LAN HTTPS, install Caddy and adapt `deploy/Caddyfile.example`.
-
-## CLI
+The examples use the global `--config` option before the subcommand:
 
 ```bash
-repeaterwatch serve --config config.toml
-repeaterwatch init-config --config config.toml
+repeaterwatch --config config.toml serve
+repeaterwatch --config config.toml init-config
 repeaterwatch generate-vapid
-repeaterwatch test-sdr --config config.toml --frequency 146.940M
-repeaterwatch listen-sdr --config config.toml --frequency 146.745M --squelch 0
-repeaterwatch transcribe-pending --config config.toml
-repeaterwatch summarize-now --config config.toml --window last_hour
-repeaterwatch cleanup --config config.toml --days 30
+repeaterwatch --config config.toml test-sdr --frequency 146.940M
+repeaterwatch --config config.toml listen-sdr --frequency 146.745M --squelch 0
+repeaterwatch --config config.toml transcribe-pending
+repeaterwatch --config config.toml summarize-now --window last_hour
+repeaterwatch --config config.toml cleanup --days 30
 ```
 
 ## Updating An Existing Pi Install
 
-After copying updated project files to `/opt/repeaterwatch`:
+This layout keeps your app code in `/opt/repeaterwatch` and your runtime config/data in `/etc/repeaterwatch`. Updating the app should only touch the code checkout and virtual environment:
 
 ```bash
 cd /opt/repeaterwatch
+sudo git pull --ff-only
 sudo systemctl stop repeaterwatch
-sudo rm -rf repeaterwatch.egg-info build dist
-sudo chown -R repeaterwatch:repeaterwatch /opt/repeaterwatch /etc/repeaterwatch
+sudo chown -R repeaterwatch:repeaterwatch /opt/repeaterwatch
 sudo -u repeaterwatch .venv/bin/pip install -e '.[transcribe]'
 sudo systemctl start repeaterwatch
 sudo journalctl -u repeaterwatch -f
+```
+
+If you previously stored data under `/opt/repeaterwatch/data`, move it to a dedicated runtime directory or keep a backup before replacing the code checkout.
+
+## Development
+
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\python -m pytest
+```
+
+On Linux/macOS:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+pytest
 ```
 
 ## Safety And Legal Notice

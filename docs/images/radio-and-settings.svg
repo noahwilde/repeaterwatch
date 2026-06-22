@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">RepeaterWatch radio and settings preview</title>
+  <desc id="desc">A sanitized preview of repeater configuration, SDR window validation, retention, display, and notification settings.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f6f8fb; }
+      .panel { fill: #ffffff; stroke: #d8e0ea; stroke-width: 1.5; }
+      .soft { fill: #f8fafc; stroke: #d8e0ea; stroke-width: 1.2; }
+      .title { font: 700 32px "Segoe UI", Arial, sans-serif; fill: #111827; }
+      .subtitle { font: 400 17px "Segoe UI", Arial, sans-serif; fill: #5f6c7b; }
+      .h2 { font: 700 21px "Segoe UI", Arial, sans-serif; fill: #111827; }
+      .label { font: 600 15px "Segoe UI", Arial, sans-serif; fill: #475569; }
+      .text { font: 400 15px "Segoe UI", Arial, sans-serif; fill: #273244; }
+      .muted { font: 400 13px "Segoe UI", Arial, sans-serif; fill: #64748b; }
+      .chip { fill: #eef4ff; stroke: #c9dcff; }
+      .chipText { font: 600 13px "Segoe UI", Arial, sans-serif; fill: #1d4ed8; }
+      .track { stroke: #94a3b8; stroke-width: 8; stroke-linecap: round; }
+      .usable { stroke: #2563eb; stroke-width: 10; stroke-linecap: round; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1200" height="760"/>
+  <text class="title" x="64" y="78">Tune the station, not the code</text>
+  <text class="subtitle" x="64" y="110">Configure repeaters, validate RTL-SDR bandwidth, and keep retention settings understandable.</text>
+
+  <rect class="panel" x="64" y="150" width="504" height="520" rx="18"/>
+  <text class="h2" x="96" y="198">Radio Configuration</text>
+
+  <rect class="soft" x="96" y="226" width="408" height="94" rx="12"/>
+  <text class="label" x="120" y="256">Local 2m Repeater</text>
+  <text class="text" x="120" y="284">146.940000 MHz - tone 100.0</text>
+  <rect class="chip" x="398" y="246" width="72" height="32" rx="16"/>
+  <text class="chipText" x="422" y="267">Edit</text>
+  <text class="muted" x="120" y="306">Collapsed by default; opens only when editing.</text>
+
+  <rect class="soft" x="96" y="344" width="408" height="94" rx="12"/>
+  <text class="label" x="120" y="374">Regional Weather Net</text>
+  <text class="text" x="120" y="402">147.210000 MHz - enabled</text>
+  <rect class="chip" x="398" y="364" width="72" height="32" rx="16"/>
+  <text class="chipText" x="422" y="385">Edit</text>
+  <text class="muted" x="120" y="424">Works with the shared IQ receiver when in range.</text>
+
+  <text class="h2" x="96" y="484">SDR Window</text>
+  <line class="track" x1="120" y1="532" x2="502" y2="532"/>
+  <line class="usable" x1="176" y1="532" x2="448" y2="532"/>
+  <circle cx="244" cy="532" r="12" fill="#22c55e" stroke="#ffffff" stroke-width="4"/>
+  <circle cx="378" cy="532" r="12" fill="#22c55e" stroke="#ffffff" stroke-width="4"/>
+  <text class="muted" x="120" y="570">Usable passband, guard bands, and repeater markers</text>
+  <text class="muted" x="120" y="592">show whether all enabled repeaters fit.</text>
+
+  <rect class="panel" x="632" y="150" width="504" height="520" rx="18"/>
+  <text class="h2" x="664" y="198">More</text>
+
+  <rect class="soft" x="664" y="226" width="408" height="70" rx="12"/>
+  <text class="label" x="688" y="256">Display</text>
+  <text class="text" x="842" y="256">Dark mode</text>
+  <rect x="1000" y="238" width="44" height="24" rx="12" fill="#2563eb"/>
+  <circle cx="1032" cy="250" r="9" fill="#ffffff"/>
+  <text class="muted" x="688" y="278">Text size and theme controls</text>
+
+  <rect class="soft" x="664" y="318" width="408" height="82" rx="12"/>
+  <text class="label" x="688" y="348">Audio and retention</text>
+  <text class="text" x="688" y="374">Raw audio 30 days - transcripts 365 days</text>
+  <text class="muted" x="688" y="392">Separate limits for display and cleanup.</text>
+
+  <rect class="soft" x="664" y="422" width="408" height="82" rx="12"/>
+  <text class="label" x="688" y="452">Notifications</text>
+  <text class="text" x="688" y="478">Keyword rules and non-automated traffic alerts</text>
+  <text class="muted" x="688" y="496">Suppress repeater IDs and other routine messages.</text>
+
+  <rect class="soft" x="664" y="526" width="408" height="82" rx="12"/>
+  <text class="label" x="688" y="556">Logs and maintenance</text>
+  <text class="text" x="688" y="582">Receiver status, restart action, and cleanup tools</text>
+  <text class="muted" x="688" y="600">Kept out of the main monitoring workflow.</text>
+</svg>
