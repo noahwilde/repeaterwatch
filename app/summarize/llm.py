@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
@@ -312,10 +313,23 @@ class SummaryService:
         self.db = db
         self.config = config
 
-    async def _summary_text_and_status(self, selection: SummarySelection) -> tuple[str, str]:
+    async def _summary_text_and_status(
+        self,
+        selection: SummarySelection,
+        repeater_id: int | None = None,
+        operation: str = "manual",
+    ) -> tuple[str, str]:
         if len(selection.transcripts) < self.config.summary.min_transcripts:
             text = "Not enough traffic to summarize for this window."
             status = "not_enough_traffic"
+            if self.config.summary.backend == "openai-compatible":
+                self._record_summary_usage(
+                    selection,
+                    repeater_id=repeater_id,
+                    operation=operation,
+                    status="skipped",
+                    reason="not_enough_traffic",
+                )
         elif (
             self.config.summary.skip_automated_only
             and selection.transcripts
@@ -323,11 +337,19 @@ class SummaryService:
         ):
             text = "Only automated/system repeater messages were heard in this window."
             status = "automated_only"
+            if self.config.summary.backend == "openai-compatible":
+                self._record_summary_usage(
+                    selection,
+                    repeater_id=repeater_id,
+                    operation=operation,
+                    status="skipped",
+                    reason="automated_only",
+                )
         elif self.config.summary.backend == "noop":
             text = self._noop_summary(selection)
             status = "completed"
         elif self.config.summary.backend == "openai-compatible":
-            text = await self._openai_compatible_summary(selection)
+            text = await self._openai_compatible_summary(selection, repeater_id, operation)
             status = "completed"
         elif self.config.summary.backend == "ollama":
             text = await self._ollama_summary(selection)
@@ -344,10 +366,15 @@ class SummaryService:
     ) -> int:
         local_tz = summary_timezone(self.config.summary.timezone)
         selection = select_source_transcripts(self.db, window_name, repeater_id, now, local_tz)
-        return await self.generate_from_selection(selection, repeater_id)
+        return await self.generate_from_selection(selection, repeater_id, operation="manual")
 
-    async def generate_from_selection(self, selection: SummarySelection, repeater_id: int | None = None) -> int:
-        text, status = await self._summary_text_and_status(selection)
+    async def generate_from_selection(
+        self,
+        selection: SummarySelection,
+        repeater_id: int | None = None,
+        operation: str = "manual",
+    ) -> int:
+        text, status = await self._summary_text_and_status(selection, repeater_id, operation)
         return self.db.add_summary(
             {
                 "window_name": selection.window_name,
@@ -370,7 +397,7 @@ class SummaryService:
     ) -> dict[str, Any]:
         local_tz = summary_timezone(self.config.summary.timezone)
         selection = select_source_transcripts(self.db, window_name, repeater_id, now, local_tz)
-        text, status = await self._summary_text_and_status(selection)
+        text, status = await self._summary_text_and_status(selection, repeater_id, operation="ad_hoc")
         return {
             "id": None,
             "ad_hoc": True,
@@ -396,7 +423,7 @@ class SummaryService:
     ) -> int:
         timezone = local_tz or summary_timezone(self.config.summary.timezone)
         selection = select_source_transcripts_between(self.db, window_name, start, end, repeater_id, timezone)
-        return await self.generate_from_selection(selection, repeater_id)
+        return await self.generate_from_selection(selection, repeater_id, operation="scheduled")
 
     def _noop_summary(self, selection: SummarySelection) -> str:
         texts = [row.get("text", "") for row in selection.transcripts]
@@ -416,7 +443,49 @@ class SummaryService:
             lines.append("Recent transcript excerpt: " + excerpt[:800])
         return "\n".join(lines)
 
-    async def _openai_compatible_summary(self, selection: SummarySelection) -> str:
+    def _record_summary_usage(
+        self,
+        selection: SummarySelection,
+        repeater_id: int | None,
+        operation: str,
+        status: str,
+        reason: str,
+        usage: dict[str, Any] | None = None,
+        elapsed_ms: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        usage = usage or {}
+        self.db.add_api_usage_event(
+            {
+                "provider": "openai-compatible",
+                "call_type": "summary",
+                "operation": operation,
+                "model": self.config.summary.model,
+                "status": status,
+                "source_type": "summary_window",
+                "repeater_id": repeater_id,
+                "window_name": selection.window_name,
+                "input_count": len(selection.transcripts),
+                "prompt_tokens": usage.get("prompt_tokens"),
+                "completion_tokens": usage.get("completion_tokens"),
+                "total_tokens": usage.get("total_tokens"),
+                "elapsed_ms": elapsed_ms,
+                "reason": reason,
+                "error": error,
+                "metadata": {
+                    "start_time": selection.start_time.isoformat(timespec="seconds"),
+                    "end_time": selection.end_time.isoformat(timespec="seconds"),
+                    "source_transcript_ids": [row["id"] for row in selection.transcripts],
+                },
+            }
+        )
+
+    async def _openai_compatible_summary(
+        self,
+        selection: SummarySelection,
+        repeater_id: int | None,
+        operation: str,
+    ) -> str:
         api_key = os.getenv(self.config.summary.api_key_env, "")
         if not api_key:
             raise RuntimeError(f"{self.config.summary.api_key_env} is not set")
@@ -430,11 +499,34 @@ class SummaryService:
             "temperature": 0.1,
         }
         headers = {"Authorization": f"Bearer {api_key}"}
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
+        started = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            self._record_summary_usage(
+                selection,
+                repeater_id=repeater_id,
+                operation=operation,
+                status="success",
+                reason="remote_summary",
+                usage=data.get("usage") or {},
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+            return content
+        except Exception as exc:
+            self._record_summary_usage(
+                selection,
+                repeater_id=repeater_id,
+                operation=operation,
+                status="error",
+                reason="remote_summary",
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                error=str(exc),
+            )
+            raise
 
     async def _ollama_summary(self, selection: SummarySelection) -> str:
         url = f"{self.config.summary.base_url.rstrip('/')}/api/chat"
@@ -488,7 +580,7 @@ class SummaryWorker:
                 continue
             if self._period_summary_matches(window_name, repeater_id, start, end, source_ids):
                 continue
-            summary_id = await self.service.generate_from_selection(selection, repeater_id)
+            summary_id = await self.service.generate_from_selection(selection, repeater_id, operation="scheduled")
             summary_ids.append(summary_id)
             summary = self.db.query_one("SELECT * FROM summaries WHERE id = ?", (summary_id,))
             if summary and summary["status"] == "completed" and self.keyword_engine:

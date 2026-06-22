@@ -22,6 +22,16 @@ def activity_bucket_minutes(activity_hours: int) -> int:
     return 120
 
 
+def api_usage_bucket_minutes(hours: int) -> int:
+    if hours <= 6:
+        return 15
+    if hours <= 24:
+        return 60
+    if hours <= 72:
+        return 180
+    return 720
+
+
 def disk_usage(path) -> dict:
     path.mkdir(parents=True, exist_ok=True)
     total, used, free = shutil.disk_usage(path)
@@ -44,6 +54,17 @@ def dashboard(
     data["config"] = public_config(config)
     data["sdr_window"] = passband_status(data["repeaters"], config.sdr)
     return data
+
+
+@router.get("/api-usage")
+def api_usage(
+    request: Request,
+    hours: int = Query(default=24, ge=1, le=24 * 30),
+) -> dict:
+    return get_db(request).api_usage_report(
+        hours=hours,
+        bucket_minutes=api_usage_bucket_minutes(hours),
+    )
 
 
 @router.get("/logs")

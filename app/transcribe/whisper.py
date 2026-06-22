@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -500,6 +501,8 @@ class TranscriptionWorker:
     async def process_recording(self, recording: dict[str, Any]) -> int:
         audio_path = Path(recording["audio_path"])
         repeater_id = recording.get("repeater_id")
+        usage_started: float | None = None
+        usage_recorded = False
         try:
             if not audio_path.exists():
                 raise FileNotFoundError(audio_path)
@@ -518,7 +521,32 @@ class TranscriptionWorker:
                             "repeater_notes": repeater.get("notes"),
                         }
                     )
+            if self.config.transcription.backend == "openai-compatible":
+                usage_started = time.monotonic()
             result = await self.service.transcribe(audio_path, recording_context)
+            if usage_started is not None:
+                status = "skipped" if result.backend == "openai-compatible-skipped" else "success"
+                self.db.add_api_usage_event(
+                    {
+                        "provider": "openai-compatible",
+                        "call_type": "transcription",
+                        "operation": "recording",
+                        "model": self.config.transcription.remote_model,
+                        "status": status,
+                        "source_type": "recording",
+                        "source_id": int(recording["id"]),
+                        "repeater_id": repeater_id,
+                        "input_count": 1,
+                        "audio_duration_seconds": _recording_duration_seconds(recording_context),
+                        "elapsed_ms": int((time.monotonic() - usage_started) * 1000),
+                        "reason": "short_recording" if status == "skipped" else "remote_transcription",
+                        "metadata": {
+                            "recording_start_time": recording.get("start_time"),
+                            "repeater_name": recording.get("repeater_name"),
+                        },
+                    }
+                )
+                usage_recorded = True
             transcript_id = self.db.add_transcript(
                 recording_id=int(recording["id"]),
                 text=result.text,
@@ -545,6 +573,28 @@ class TranscriptionWorker:
                 )
             return transcript_id
         except Exception as exc:
+            if usage_started is not None and not usage_recorded:
+                self.db.add_api_usage_event(
+                    {
+                        "provider": "openai-compatible",
+                        "call_type": "transcription",
+                        "operation": "recording",
+                        "model": self.config.transcription.remote_model,
+                        "status": "error",
+                        "source_type": "recording",
+                        "source_id": int(recording["id"]),
+                        "repeater_id": repeater_id,
+                        "input_count": 1,
+                        "audio_duration_seconds": _recording_duration_seconds(recording),
+                        "elapsed_ms": int((time.monotonic() - usage_started) * 1000),
+                        "reason": "remote_transcription",
+                        "error": str(exc),
+                        "metadata": {
+                            "recording_start_time": recording.get("start_time"),
+                            "repeater_name": recording.get("repeater_name"),
+                        },
+                    }
+                )
             logger.exception("Transcription failed for recording %s", recording["id"])
             text = f"Transcription failed: {exc}"
             return self.db.add_transcript(

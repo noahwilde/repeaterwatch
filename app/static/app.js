@@ -1,10 +1,12 @@
 const dashboardUrl = "/api/dashboard";
 const activityRangeStorageKey = "repeaterwatch.activityHours";
+const apiUsageRangeStorageKey = "repeaterwatch.apiUsageHours";
 const textSizeStorageKey = "repeaterwatch.textSize";
 const themeStorageKey = "repeaterwatch.theme";
 const lightThemeColor = "#24413a";
 const darkThemeColor = "#111113";
 const activityHourOptions = new Set([1, 6, 12, 24, 72, 168]);
+const apiUsageHourOptions = new Set([24, 72, 168, 720]);
 const textSizeMin = 85;
 const textSizeMax = 125;
 const textSizeStep = 5;
@@ -39,6 +41,15 @@ const els = {
   summaryStatus: document.querySelector("#summaryStatus"),
   adHocSummary: document.querySelector("#adHocSummary"),
   settingsForm: document.querySelector("#settingsForm"),
+  apiUsageRange: document.querySelector("#apiUsageRange"),
+  refreshApiUsageBtn: document.querySelector("#refreshApiUsageBtn"),
+  apiUsageStatus: document.querySelector("#apiUsageStatus"),
+  apiUsageStats: document.querySelector("#apiUsageStats"),
+  apiUsageChart: document.querySelector("#apiUsageChart"),
+  apiUsageBreakdown: document.querySelector("#apiUsageBreakdown"),
+  apiUsageSettingsForm: document.querySelector("#apiUsageSettingsForm"),
+  apiUsageSettingsStatus: document.querySelector("#apiUsageSettingsStatus"),
+  apiUsageEvents: document.querySelector("#apiUsageEvents"),
   liveTestForm: document.querySelector("#liveTestForm"),
   clearRecordingsBtn: document.querySelector("#clearRecordingsBtn"),
   clearStaticRecordingsBtn: document.querySelector("#clearStaticRecordingsBtn"),
@@ -96,6 +107,7 @@ let listenSampleRate = 24000;
 let listenStatusMessage = "";
 let activeView = "";
 let activityHours = loadActivityHours();
+let apiUsageHours = loadApiUsageHours();
 let pullStartY = 0;
 let pullDistance = 0;
 let pullTracking = false;
@@ -119,6 +131,7 @@ let summarySearchTerm = "";
 let adHocSummary = null;
 let dashboardRefreshInFlight = false;
 let dashboardRefreshPending = false;
+let apiUsageRefreshInFlight = false;
 let editingRepeaterId = null;
 let editingRuleId = null;
 
@@ -152,6 +165,11 @@ function updateViewHash(view) {
 function loadActivityHours() {
   const value = Number(window.localStorage.getItem(activityRangeStorageKey) || 24);
   return activityHourOptions.has(value) ? value : 24;
+}
+
+function loadApiUsageHours() {
+  const value = Number(window.localStorage.getItem(apiUsageRangeStorageKey) || 24);
+  return apiUsageHourOptions.has(value) ? value : 24;
 }
 
 function normalizeTextSize(value) {
@@ -232,6 +250,7 @@ function setView(view, updateHash = true) {
   if (updateHash) updateViewHash(nextView);
   if (nextView === "more") {
     refreshLogs();
+    refreshApiUsage();
   }
   if (nextView === "transcripts") {
     flushTranscriptRender();
@@ -347,6 +366,10 @@ function formatDuration(seconds) {
   const hours = Math.floor(value / 3600);
   const minutes = Math.round((value % 3600) / 60);
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
 }
 
 function activityHoursFromWindow(activity) {
@@ -1641,28 +1664,271 @@ async function refreshLogs() {
   }
 }
 
+async function refreshApiUsage() {
+  if (!els.apiUsageChart || apiUsageRefreshInFlight) return;
+  apiUsageRefreshInFlight = true;
+  if (els.apiUsageStatus) {
+    els.apiUsageStatus.textContent = "Loading API usage...";
+  }
+  try {
+    const data = await fetchJson(`/api/api-usage?hours=${encodeURIComponent(apiUsageHours)}`);
+    renderApiUsage(data);
+  } catch (error) {
+    if (els.apiUsageStatus) {
+      els.apiUsageStatus.textContent = error.message;
+    }
+    if (els.apiUsageStats) els.apiUsageStats.innerHTML = "";
+    if (els.apiUsageChart) els.apiUsageChart.innerHTML = "";
+    if (els.apiUsageBreakdown) els.apiUsageBreakdown.innerHTML = "";
+    if (els.apiUsageEvents) els.apiUsageEvents.innerHTML = "";
+  } finally {
+    apiUsageRefreshInFlight = false;
+  }
+}
+
+function renderApiUsage(data) {
+  const totals = data && data.totals ? data.totals : {};
+  const callTypes = Array.isArray(data && data.call_types) ? data.call_types : [];
+  const events = Array.isArray(data && data.recent_events) ? data.recent_events : [];
+  renderApiUsageStats(totals);
+  renderApiUsageChart(data, callTypes);
+  renderApiUsageBreakdown(data);
+  renderApiUsageEvents(events);
+  if (els.apiUsageStatus) {
+    const range = formatApiUsageWindowLabel(data);
+    els.apiUsageStatus.textContent = totals.events
+      ? `${range} - ${formatCount(totals.remote_calls)} remote call${totals.remote_calls === 1 ? "" : "s"}, ${formatCount(totals.skipped)} skipped.`
+      : `${range} - no API usage events recorded yet.`;
+  }
+}
+
+function renderApiUsageStats(totals) {
+  if (!els.apiUsageStats) return;
+  els.apiUsageStats.innerHTML = `
+    <div>
+      <span class="metric-label">Remote calls</span>
+      <strong>${formatCount(totals.remote_calls)}</strong>
+    </div>
+    <div>
+      <span class="metric-label">Skipped</span>
+      <strong>${formatCount(totals.skipped)}</strong>
+    </div>
+    <div>
+      <span class="metric-label">Errors</span>
+      <strong>${formatCount(totals.errors)}</strong>
+    </div>
+    <div>
+      <span class="metric-label">Audio sent</span>
+      <strong>${formatDuration(totals.audio_duration_seconds)}</strong>
+    </div>
+    <div>
+      <span class="metric-label">Tokens</span>
+      <strong>${totals.token_events ? formatCount(totals.total_tokens) : "n/a"}</strong>
+    </div>
+  `;
+}
+
+function renderApiUsageChart(data, callTypes) {
+  if (!els.apiUsageChart) return;
+  els.apiUsageChart.innerHTML = "";
+  const buckets = Array.isArray(data && data.buckets) ? data.buckets : [];
+  if (!buckets.length) {
+    setEmpty(els.apiUsageChart, "No usage bucket data available.");
+    return;
+  }
+  const visible = callTypes.filter((row) => Number(row.events || 0) > 0);
+  if (!visible.length) {
+    setEmpty(els.apiUsageChart, "Usage tracking starts with this version; earlier API calls are not shown.");
+    return;
+  }
+  const maxValue = Math.max(
+    1,
+    ...visible.flatMap((row) => row.buckets.map((bucket) => Number(bucket.remote_calls || 0) + Number(bucket.skipped || 0)))
+  );
+  const chart = document.createElement("div");
+  chart.className = "api-usage-rows";
+  chart.style.setProperty("--bucket-count", String(buckets.length));
+  for (const rowData of visible) {
+    const row = document.createElement("div");
+    row.className = "api-usage-row";
+    const cells = rowData.buckets.map((bucket, index) => apiUsageCell(bucket, buckets[index], maxValue)).join("");
+    row.innerHTML = `
+      <div class="api-usage-label">
+        <h3>${escapeHtml(formatApiCallType(rowData.call_type))}</h3>
+        <div class="meta">
+          <span class="pill">${formatCount(rowData.remote_calls)} calls</span>
+          <span class="pill">${formatCount(rowData.skipped)} skipped</span>
+          ${rowData.errors ? `<span class="pill state-error">${formatCount(rowData.errors)} errors</span>` : ""}
+        </div>
+        <p class="muted">${apiUsageRowDetail(rowData)}</p>
+      </div>
+      <div class="api-usage-track">
+        <div class="api-usage-bars">${cells}</div>
+        ${apiUsageAxis(data)}
+      </div>
+    `;
+    chart.appendChild(row);
+  }
+  els.apiUsageChart.appendChild(chart);
+}
+
+function apiUsageCell(bucket, windowBucket, maxValue) {
+  const calls = Number(bucket.remote_calls || 0);
+  const skipped = Number(bucket.skipped || 0);
+  const errors = Number(bucket.errors || 0);
+  const value = calls + skipped;
+  const level = value ? Math.min(0.95, 0.22 + (value / maxValue) * 0.73) : 0;
+  const classes = ["api-usage-cell"];
+  if (calls) classes.push("active");
+  if (skipped && !calls) classes.push("skipped");
+  if (errors) classes.push("error");
+  const title = `${formatActivityDateTime(windowBucket.start_time)}: ${formatCount(calls)} remote call${calls === 1 ? "" : "s"}, ${formatCount(skipped)} skipped${errors ? `, ${formatCount(errors)} error${errors === 1 ? "" : "s"}` : ""}`;
+  return `<span class="${classes.join(" ")}" style="--usage-level: ${level.toFixed(2)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
+}
+
+function apiUsageAxis(data) {
+  const start = new Date(data.start_time);
+  const end = new Date(data.end_time);
+  const middle = new Date(start.getTime() + (end.getTime() - start.getTime()) / 2);
+  return `
+    <div class="api-usage-axis">
+      ${apiUsageAxisTick("start", start)}
+      ${apiUsageAxisTick("middle", middle)}
+      ${apiUsageAxisTick("now", end)}
+    </div>
+  `;
+}
+
+function apiUsageAxisTick(label, value) {
+  return `<span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(formatAxisTime(value))}</small></span>`;
+}
+
+function renderApiUsageBreakdown(data) {
+  if (!els.apiUsageBreakdown) return;
+  const models = Array.isArray(data && data.models) ? data.models : [];
+  const reasons = Array.isArray(data && data.reasons) ? data.reasons : [];
+  els.apiUsageBreakdown.innerHTML = `
+    <div>
+      <h3>Models</h3>
+      ${models.length ? models.map((row) => `
+        <p><strong>${escapeHtml(row.model || "unknown")}</strong> <span class="muted">${escapeHtml(formatApiCallType(row.call_type))}</span></p>
+        <div class="meta">
+          <span class="pill">${formatCount(row.remote_calls)} calls</span>
+          ${row.total_tokens ? `<span class="pill">${formatCount(row.total_tokens)} tokens</span>` : ""}
+          ${row.audio_duration_seconds ? `<span class="pill">${formatDuration(row.audio_duration_seconds)} audio</span>` : ""}
+        </div>
+      `).join("") : `<p class="muted">No remote model calls in this range.</p>`}
+    </div>
+    <div>
+      <h3>Why</h3>
+      ${reasons.length ? reasons.map((row) => `
+        <p><strong>${escapeHtml(formatApiReason(row.reason))}</strong> <span class="muted">${escapeHtml(formatStatus(row.status))}</span></p>
+        <div class="meta">
+          <span class="pill">${formatCount(row.events)} event${row.events === 1 ? "" : "s"}</span>
+          <span class="pill">${escapeHtml(formatApiCallType(row.call_type))}</span>
+        </div>
+      `).join("") : `<p class="muted">No reasons recorded in this range.</p>`}
+    </div>
+  `;
+}
+
+function renderApiUsageEvents(events) {
+  if (!els.apiUsageEvents) return;
+  els.apiUsageEvents.innerHTML = "";
+  if (!events.length) {
+    setEmpty(els.apiUsageEvents, "No API usage events recorded yet.");
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const event of events.slice(0, 25)) {
+    const detail = [
+      event.operation ? formatApiReason(event.operation) : "",
+      event.model || "",
+      event.repeater_name || "",
+      event.window_name ? formatSummaryWindow(event.window_name) : "",
+    ].filter(Boolean).join(" - ");
+    const metrics = [
+      event.input_count != null ? `${formatCount(event.input_count)} input${Number(event.input_count) === 1 ? "" : "s"}` : "",
+      event.audio_duration_seconds ? `${formatDuration(event.audio_duration_seconds)} audio` : "",
+      event.total_tokens ? `${formatCount(event.total_tokens)} tokens` : "",
+      event.elapsed_ms != null ? `${formatCount(event.elapsed_ms)}ms` : "",
+    ].filter(Boolean).map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("");
+    const error = event.error ? `<p class="state-error">${escapeHtml(compactText(event.error, "", 160))}</p>` : "";
+    fragment.appendChild(item(`
+      <div class="item-head">
+        <div>
+          <h3>${escapeHtml(formatApiCallType(event.call_type))}</h3>
+          <p class="muted">${escapeHtml(formatTime(event.created_at))}${detail ? ` - ${escapeHtml(detail)}` : ""}</p>
+        </div>
+        <span class="pill state-${escapeHtml(event.status)}">${escapeHtml(formatStatus(event.status))}</span>
+      </div>
+      <div class="meta">
+        <span class="pill">${escapeHtml(formatApiReason(event.reason || "unspecified"))}</span>
+        ${metrics}
+      </div>
+      ${error}
+    `));
+  }
+  els.apiUsageEvents.appendChild(fragment);
+}
+
+function apiUsageRowDetail(row) {
+  const parts = [];
+  if (row.total_tokens) parts.push(`${formatCount(row.total_tokens)} tokens`);
+  if (row.audio_duration_seconds) parts.push(`${formatDuration(row.audio_duration_seconds)} audio sent`);
+  if (!parts.length) parts.push("No billable size detail returned for these events.");
+  return parts.join(" - ");
+}
+
+function formatApiCallType(value) {
+  const labels = {
+    transcription: "Transcriptions",
+    summary: "Summaries",
+  };
+  return labels[value] || String(value || "API").replaceAll("_", " ");
+}
+
+function formatApiReason(value) {
+  const labels = {
+    remote_transcription: "Remote transcription",
+    short_recording: "Short recording guardrail",
+    remote_summary: "Remote summary",
+    automated_only: "Automated-only guardrail",
+    not_enough_traffic: "Not enough traffic",
+    recording: "Recording",
+    scheduled: "Scheduled",
+    ad_hoc: "Ad hoc",
+    manual: "Manual",
+  };
+  return labels[value] || String(value || "unspecified").replaceAll("_", " ");
+}
+
+function formatApiUsageWindowLabel(data) {
+  if (!data || !data.start_time || !data.end_time) return `Last ${apiUsageHours}h`;
+  const start = new Date(data.start_time);
+  const end = new Date(data.end_time);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return `Last ${apiUsageHours}h`;
+  const hours = Math.max(1, Math.round((end.getTime() - start.getTime()) / 3600000));
+  if (hours < 24) return `Last ${hours}h`;
+  if (hours % 24 === 0) return `Last ${hours / 24}d`;
+  return `Last ${hours}h`;
+}
+
 function renderSettings(config) {
-  if (!config || document.activeElement.closest("#settingsForm")) return;
-  const form = els.settingsForm;
-  const scheduledWindows = new Set((config.summary && config.summary.scheduled_windows) || []);
-  els.settingsForm.elements.threshold.value = config.vox.threshold;
-  els.settingsForm.elements.pre_roll_seconds.value = config.vox.pre_roll_seconds;
-  els.settingsForm.elements.post_silence_seconds.value = config.vox.post_silence_seconds;
-  els.settingsForm.elements.min_duration_seconds.value = config.vox.min_duration_seconds;
-  els.settingsForm.elements.max_duration_seconds.value = config.vox.max_duration_seconds;
-  els.settingsForm.elements.raw_audio_days.value = config.retention.raw_audio_days;
-  els.settingsForm.elements.transcripts_days.value = config.retention.transcripts_days;
-  els.settingsForm.elements.summaries_days.value = config.retention.summaries_days;
-  els.settingsForm.elements.transcript_display_limit.value = config.retention.transcript_display_limit;
-  els.settingsForm.elements.summary_display_limit.value = config.retention.summary_display_limit;
-  form.elements.remote_min_duration_seconds.value = config.transcription.remote_min_duration_seconds;
-  form.elements.summary_min_transcripts.value = config.summary.min_transcripts;
-  form.elements.summary_schedule_delay_seconds.value = config.summary.schedule_delay_seconds;
-  form.elements.summary_window_quarter_hour.checked = scheduledWindows.has("quarter_hour");
-  form.elements.summary_window_hour.checked = scheduledWindows.has("hour");
-  form.elements.summary_window_day.checked = scheduledWindows.has("day");
-  form.elements.per_repeater_scheduled.checked = Boolean(config.summary.per_repeater_scheduled);
-  form.elements.skip_automated_only.checked = Boolean(config.summary.skip_automated_only);
+  if (!config) return;
+  if (!document.activeElement.closest("#settingsForm")) {
+    els.settingsForm.elements.threshold.value = config.vox.threshold;
+    els.settingsForm.elements.pre_roll_seconds.value = config.vox.pre_roll_seconds;
+    els.settingsForm.elements.post_silence_seconds.value = config.vox.post_silence_seconds;
+    els.settingsForm.elements.min_duration_seconds.value = config.vox.min_duration_seconds;
+    els.settingsForm.elements.max_duration_seconds.value = config.vox.max_duration_seconds;
+    els.settingsForm.elements.raw_audio_days.value = config.retention.raw_audio_days;
+    els.settingsForm.elements.transcripts_days.value = config.retention.transcripts_days;
+    els.settingsForm.elements.summaries_days.value = config.retention.summaries_days;
+    els.settingsForm.elements.transcript_display_limit.value = config.retention.transcript_display_limit;
+    els.settingsForm.elements.summary_display_limit.value = config.retention.summary_display_limit;
+  }
+  renderApiUsageSettings(config);
   if (!liveFormInitialized) {
     const firstRepeater = config.repeaters && config.repeaters[0];
     if (firstRepeater) {
@@ -1674,6 +1940,20 @@ function renderSettings(config) {
       liveFormInitialized = true;
     }
   }
+}
+
+function renderApiUsageSettings(config) {
+  if (!els.apiUsageSettingsForm || document.activeElement.closest("#apiUsageSettingsForm")) return;
+  const form = els.apiUsageSettingsForm;
+  const scheduledWindows = new Set((config.summary && config.summary.scheduled_windows) || []);
+  form.elements.remote_min_duration_seconds.value = config.transcription.remote_min_duration_seconds;
+  form.elements.summary_min_transcripts.value = config.summary.min_transcripts;
+  form.elements.summary_schedule_delay_seconds.value = config.summary.schedule_delay_seconds;
+  form.elements.summary_window_quarter_hour.checked = scheduledWindows.has("quarter_hour");
+  form.elements.summary_window_hour.checked = scheduledWindows.has("hour");
+  form.elements.summary_window_day.checked = scheduledWindows.has("day");
+  form.elements.per_repeater_scheduled.checked = Boolean(config.summary.per_repeater_scheduled);
+  form.elements.skip_automated_only.checked = Boolean(config.summary.skip_automated_only);
 }
 
 function formData(form) {
@@ -1745,6 +2025,21 @@ function setupActivityRange() {
     window.localStorage.setItem(activityRangeStorageKey, String(activityHours));
     refreshDashboard();
   });
+}
+
+function setupApiUsageControls() {
+  if (!els.apiUsageRange) return;
+  els.apiUsageRange.value = String(apiUsageHours);
+  els.apiUsageRange.addEventListener("change", () => {
+    const nextHours = Number(els.apiUsageRange.value);
+    apiUsageHours = apiUsageHourOptions.has(nextHours) ? nextHours : 24;
+    els.apiUsageRange.value = String(apiUsageHours);
+    window.localStorage.setItem(apiUsageRangeStorageKey, String(apiUsageHours));
+    refreshApiUsage();
+  });
+  if (els.refreshApiUsageBtn) {
+    els.refreshApiUsageBtn.addEventListener("click", refreshApiUsage);
+  }
 }
 
 function setupTranscriptSearch() {
@@ -1933,10 +2228,6 @@ els.settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!currentConfig) return;
   const data = formData(els.settingsForm);
-  const scheduledWindows = [];
-  if (els.settingsForm.elements.summary_window_quarter_hour.checked) scheduledWindows.push("quarter_hour");
-  if (els.settingsForm.elements.summary_window_hour.checked) scheduledWindows.push("hour");
-  if (els.settingsForm.elements.summary_window_day.checked) scheduledWindows.push("day");
   const result = await withSaveFeedback(els.settingsForm, els.settingsStatus, {
     saving: "Saving settings...",
     saved: "Settings saved.",
@@ -1958,16 +2249,6 @@ els.settingsForm.addEventListener("submit", async (event) => {
           transcript_display_limit: Number(data.transcript_display_limit),
           summary_display_limit: Number(data.summary_display_limit),
         },
-        transcription: {
-          remote_min_duration_seconds: Number(data.remote_min_duration_seconds),
-        },
-        summary: {
-          min_transcripts: Number(data.summary_min_transcripts),
-          scheduled_windows: scheduledWindows,
-          per_repeater_scheduled: els.settingsForm.elements.per_repeater_scheduled.checked,
-          skip_automated_only: els.settingsForm.elements.skip_automated_only.checked,
-          schedule_delay_seconds: Number(data.summary_schedule_delay_seconds),
-        },
       }),
     })
   );
@@ -1975,6 +2256,42 @@ els.settingsForm.addEventListener("submit", async (event) => {
   currentConfig = result.value;
   refreshDashboard();
 });
+
+if (els.apiUsageSettingsForm) {
+  els.apiUsageSettingsForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!currentConfig) return;
+    const data = formData(els.apiUsageSettingsForm);
+    const scheduledWindows = [];
+    if (els.apiUsageSettingsForm.elements.summary_window_quarter_hour.checked) scheduledWindows.push("quarter_hour");
+    if (els.apiUsageSettingsForm.elements.summary_window_hour.checked) scheduledWindows.push("hour");
+    if (els.apiUsageSettingsForm.elements.summary_window_day.checked) scheduledWindows.push("day");
+    const result = await withSaveFeedback(els.apiUsageSettingsForm, els.apiUsageSettingsStatus, {
+      saving: "Saving API settings...",
+      saved: "API settings saved.",
+    }, () =>
+      fetchJson("/api/audio-settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          transcription: {
+            remote_min_duration_seconds: Number(data.remote_min_duration_seconds),
+          },
+          summary: {
+            min_transcripts: Number(data.summary_min_transcripts),
+            scheduled_windows: scheduledWindows,
+            per_repeater_scheduled: els.apiUsageSettingsForm.elements.per_repeater_scheduled.checked,
+            skip_automated_only: els.apiUsageSettingsForm.elements.skip_automated_only.checked,
+            schedule_delay_seconds: Number(data.summary_schedule_delay_seconds),
+          },
+        }),
+      })
+    );
+    if (!result.ok) return;
+    currentConfig = result.value;
+    renderApiUsageSettings(currentConfig);
+    refreshApiUsage();
+  });
+}
 
 els.liveTestForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2716,6 +3033,7 @@ setupCallsignLookup();
 setupPwa();
 setupPullToRefresh();
 setupActivityRange();
+setupApiUsageControls();
 setupTranscriptSearch();
 setupSummaryControls();
 setupDisplaySettings();

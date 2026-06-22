@@ -618,28 +618,6 @@ textarea {
   grid-column: 1 / -1;
 }
 
-.settings-fieldset {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  min-width: 0;
-  margin: 2px 0 0;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
-.settings-fieldset legend {
-  padding: 0 4px;
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.settings-fieldset .check {
-  align-self: end;
-}
-
 .check {
   display: flex;
   align-items: center;
@@ -1109,6 +1087,148 @@ textarea {
   border-radius: 6px;
 }
 
+.api-usage-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-usage-stats > div,
+.api-usage-breakdown > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.api-usage-stats strong {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+}
+
+.api-usage-chart,
+.api-usage-rows,
+.api-usage-breakdown {
+  display: grid;
+  gap: 12px;
+}
+
+.api-usage-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 250px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.api-usage-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.api-usage-label h3,
+.api-usage-breakdown h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.api-usage-label p,
+.api-usage-breakdown p {
+  margin: 5px 0 0;
+}
+
+.api-usage-track {
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.api-usage-bars {
+  display: grid;
+  grid-template-columns: repeat(var(--bucket-count), minmax(5px, 1fr));
+  gap: 2px;
+  min-width: 620px;
+  min-height: 52px;
+}
+
+.api-usage-cell {
+  display: block;
+  min-height: 52px;
+  border: 1px solid var(--chart-cell-border);
+  border-radius: 3px;
+  background: var(--chart-cell-bg);
+}
+
+.api-usage-cell.active {
+  border-color: var(--chart-active-border);
+  background: linear-gradient(
+    180deg,
+    rgb(var(--activity-teal-rgb) / var(--usage-level)),
+    rgb(var(--activity-amber-rgb) / var(--usage-level))
+  );
+}
+
+.api-usage-cell.skipped {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      var(--soft),
+      var(--soft) 3px,
+      var(--chart-cell-bg) 3px,
+      var(--chart-cell-bg) 6px
+    );
+}
+
+.api-usage-cell.error {
+  border-color: var(--red);
+}
+
+.api-usage-axis {
+  display: flex;
+  justify-content: space-between;
+  min-width: 620px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.api-usage-axis span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.api-usage-axis span:nth-child(2) {
+  align-items: center;
+}
+
+.api-usage-axis span:last-child {
+  align-items: flex-end;
+}
+
+.api-usage-axis strong {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.api-usage-axis small {
+  font: inherit;
+}
+
+.api-usage-breakdown {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .state-completed {
   color: var(--teal);
 }
@@ -1118,6 +1238,14 @@ textarea {
 }
 
 .state-automated_only {
+  color: var(--muted);
+}
+
+.state-success {
+  color: var(--teal);
+}
+
+.state-skipped {
   color: var(--muted);
 }
 
@@ -1396,9 +1524,10 @@ audio {
 
   .metrics,
   .summary-stats,
+  .api-usage-stats,
+  .api-usage-breakdown,
   .layout,
-  .form-grid,
-  .settings-fieldset {
+  .form-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1536,11 +1665,24 @@ audio {
     gap: 8px;
   }
 
+  .api-usage-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
   .activity-label {
     display: block;
   }
 
+  .api-usage-label {
+    display: block;
+  }
+
   .activity-track {
+    overflow-x: visible;
+  }
+
+  .api-usage-track {
     overflow-x: visible;
   }
 
@@ -1557,7 +1699,25 @@ audio {
     border-radius: 1px;
   }
 
+  .api-usage-bars {
+    grid-template-columns: repeat(var(--bucket-count), minmax(0, 1fr));
+    gap: 1px;
+    min-width: 0;
+    min-height: 42px;
+  }
+
+  .api-usage-cell {
+    min-height: 42px;
+    border: 0;
+    border-radius: 1px;
+  }
+
   .activity-axis {
+    min-width: 0;
+    font-size: 0.68rem;
+  }
+
+  .api-usage-axis {
     min-width: 0;
     font-size: 0.68rem;
   }

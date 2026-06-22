@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 
 from app.config import AppConfig
+from app.db import Database
 from app.transcribe.whisper import (
     STATIC_ONLY_TEXT,
     TranscriptionService,
+    TranscriptionWorker,
     build_transcription_prompt,
     finalize_transcript_result,
     low_confidence_text,
@@ -125,3 +127,35 @@ def test_remote_transcription_skips_short_recording_before_api_key_check():
     assert result.original_text == STATIC_ONLY_TEXT
     assert result.backend == "openai-compatible-skipped"
     assert result.low_confidence is True
+
+
+def test_transcription_worker_records_short_remote_skip_usage(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        audio_path = tmp_path / "short.wav"
+        audio_path.write_bytes(b"not really a wav")
+        recording_id = db.add_recording(
+            {
+                "frequency_mhz": 146.745,
+                "repeater_name": "K0RPT Main",
+                "start_time": "2026-06-22T12:00:00+00:00",
+                "duration_seconds": 1.0,
+                "audio_path": str(audio_path),
+                "status": "completed",
+            }
+        )
+        recording = db.get_recording(recording_id)
+        config = AppConfig()
+        config.transcription.backend = "openai-compatible"
+        config.transcription.remote_min_duration_seconds = 2.0
+        worker = TranscriptionWorker(db, config)
+
+        asyncio.run(worker.process_recording(recording))
+        usage_events = db.list_api_usage_events()
+
+        assert usage_events[0]["call_type"] == "transcription"
+        assert usage_events[0]["status"] == "skipped"
+        assert usage_events[0]["reason"] == "short_recording"
+        assert usage_events[0]["audio_duration_seconds"] == 1.0
+    finally:
+        db.close()

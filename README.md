@@ -145,7 +145,7 @@ OpenAI-compatible transcription and summary backends are optional. To reduce unn
 - Keep `[summary].skip_automated_only = true` so windows containing only repeater IDs, welcome messages, and tone announcements do not call the summary model.
 - Raise `[summary].min_transcripts` to `2` or `3` if one isolated transmission is not worth summarizing automatically.
 
-These same controls are available in the More tab under Audio and Retention.
+These same controls are available in the More tab under API Usage. That panel also tracks remote transcription and summary calls over time, including skipped guardrail events, errors, returned token counts when available, and audio seconds sent for transcription.
 
 ## Web Push Notifications
 

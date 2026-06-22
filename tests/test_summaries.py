@@ -253,9 +253,13 @@ def test_automated_only_summary_skips_remote_model(tmp_path):
 
         summary_id = asyncio.run(service.generate_from_selection(selection, repeater_id))
         summary = db.get_summary(summary_id)
+        usage_events = db.list_api_usage_events()
 
         assert summary["status"] == "automated_only"
         assert "automated/system repeater messages" in summary["text"]
+        assert usage_events[0]["call_type"] == "summary"
+        assert usage_events[0]["status"] == "skipped"
+        assert usage_events[0]["reason"] == "automated_only"
     finally:
         db.close()
 

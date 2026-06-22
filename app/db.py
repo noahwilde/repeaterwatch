@@ -183,11 +183,38 @@ class Database:
                 FOREIGN KEY(repeater_id) REFERENCES repeaters(id) ON DELETE CASCADE
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS api_usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                call_type TEXT NOT NULL,
+                operation TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                source_type TEXT,
+                source_id INTEGER,
+                repeater_id INTEGER,
+                window_name TEXT,
+                input_count INTEGER,
+                audio_duration_seconds REAL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
+                elapsed_ms INTEGER,
+                reason TEXT,
+                error TEXT,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(repeater_id) REFERENCES repeaters(id) ON DELETE SET NULL
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS idx_recordings_created_at ON recordings(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings(status)",
             "CREATE INDEX IF NOT EXISTS idx_transcripts_status ON transcripts(status)",
             "CREATE INDEX IF NOT EXISTS idx_summaries_created_at ON summaries(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_notification_events_rule_created ON notification_events(rule_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_api_usage_events_created ON api_usage_events(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_api_usage_events_type_created ON api_usage_events(call_type, created_at)",
         ]
         with self._lock:
             for statement in statements:
@@ -784,6 +811,258 @@ class Database:
         cursor = self.execute("DELETE FROM notification_events")
         return int(cursor.rowcount)
 
+    def add_api_usage_event(self, data: dict[str, Any]) -> int:
+        metadata = data.get("metadata", {})
+        cursor = self.execute(
+            """
+            INSERT INTO api_usage_events
+            (created_at, provider, call_type, operation, model, status, source_type, source_id,
+             repeater_id, window_name, input_count, audio_duration_seconds, prompt_tokens,
+             completion_tokens, total_tokens, elapsed_ms, reason, error, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data.get("created_at", utc_now()),
+                data.get("provider", "openai-compatible"),
+                data["call_type"],
+                data.get("operation", ""),
+                data.get("model", ""),
+                data.get("status", "success"),
+                data.get("source_type"),
+                data.get("source_id"),
+                data.get("repeater_id"),
+                data.get("window_name"),
+                data.get("input_count"),
+                data.get("audio_duration_seconds"),
+                data.get("prompt_tokens"),
+                data.get("completion_tokens"),
+                data.get("total_tokens"),
+                data.get("elapsed_ms"),
+                data.get("reason"),
+                data.get("error"),
+                json.dumps(metadata if isinstance(metadata, dict) else {}),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def list_api_usage_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        return [self._normalize_api_usage_event(row) for row in self.query_all(
+            """
+            SELECT e.*, r.name AS repeater_name
+            FROM api_usage_events e
+            LEFT JOIN repeaters r ON r.id = e.repeater_id
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )]
+
+    def api_usage_report(
+        self,
+        now: datetime | None = None,
+        hours: int = 24,
+        bucket_minutes: int = 60,
+        event_limit: int = 50,
+    ) -> dict[str, Any]:
+        end_time = now or datetime.now(UTC)
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=UTC)
+        else:
+            end_time = end_time.astimezone(UTC)
+        end_time = end_time.replace(microsecond=0)
+
+        bucket_seconds = max(60, int(bucket_minutes) * 60)
+        bucket_count = max(1, int((max(1, hours) * 3600) / bucket_seconds))
+        start_time = end_time - timedelta(seconds=bucket_count * bucket_seconds)
+        buckets = [
+            {
+                "start_time": (start_time + timedelta(seconds=index * bucket_seconds)).isoformat(timespec="seconds"),
+                "end_time": (start_time + timedelta(seconds=(index + 1) * bucket_seconds)).isoformat(timespec="seconds"),
+            }
+            for index in range(bucket_count)
+        ]
+
+        rows = [self._normalize_api_usage_event(row) for row in self.query_all(
+            """
+            SELECT e.*, r.name AS repeater_name
+            FROM api_usage_events e
+            LEFT JOIN repeaters r ON r.id = e.repeater_id
+            WHERE e.created_at >= ? AND e.created_at <= ?
+            ORDER BY e.created_at ASC, e.id ASC
+            """,
+            (start_time.isoformat(timespec="seconds"), end_time.isoformat(timespec="seconds")),
+        )]
+
+        totals = {
+            "events": 0,
+            "remote_calls": 0,
+            "success": 0,
+            "skipped": 0,
+            "errors": 0,
+            "audio_duration_seconds": 0.0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "token_events": 0,
+        }
+        series_by_type: dict[str, dict[str, Any]] = {}
+        models: dict[tuple[str, str], dict[str, Any]] = {}
+        reasons: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+        def empty_bucket() -> dict[str, Any]:
+            return {
+                "events": 0,
+                "remote_calls": 0,
+                "success": 0,
+                "skipped": 0,
+                "errors": 0,
+                "audio_duration_seconds": 0.0,
+                "total_tokens": 0,
+            }
+
+        def series_for(call_type: str) -> dict[str, Any]:
+            if call_type not in series_by_type:
+                series_by_type[call_type] = {
+                    "call_type": call_type,
+                    "events": 0,
+                    "remote_calls": 0,
+                    "success": 0,
+                    "skipped": 0,
+                    "errors": 0,
+                    "audio_duration_seconds": 0.0,
+                    "total_tokens": 0,
+                    "buckets": [empty_bucket() for _ in range(bucket_count)],
+                }
+            return series_by_type[call_type]
+
+        for row in rows:
+            totals["events"] += 1
+            call_type = str(row.get("call_type") or "unknown")
+            status = str(row.get("status") or "unknown")
+            remote_call = status != "skipped"
+            success = status == "success"
+            skipped = status == "skipped"
+            error = status == "error"
+            audio_seconds = float(row.get("audio_duration_seconds") or 0.0) if remote_call else 0.0
+            prompt_tokens = int(row.get("prompt_tokens") or 0)
+            completion_tokens = int(row.get("completion_tokens") or 0)
+            total_tokens = int(row.get("total_tokens") or 0)
+            has_tokens = any(row.get(field) is not None for field in ("prompt_tokens", "completion_tokens", "total_tokens"))
+
+            if remote_call:
+                totals["remote_calls"] += 1
+            if success:
+                totals["success"] += 1
+            if skipped:
+                totals["skipped"] += 1
+            if error:
+                totals["errors"] += 1
+            totals["audio_duration_seconds"] += audio_seconds
+            totals["prompt_tokens"] += prompt_tokens
+            totals["completion_tokens"] += completion_tokens
+            totals["total_tokens"] += total_tokens
+            if has_tokens:
+                totals["token_events"] += 1
+
+            try:
+                created_at = parse_time(str(row["created_at"]))
+            except (KeyError, ValueError):
+                created_at = start_time
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            else:
+                created_at = created_at.astimezone(UTC)
+            bucket_index = int((created_at - start_time).total_seconds() // bucket_seconds)
+            bucket_index = min(max(0, bucket_index), bucket_count - 1)
+
+            series = series_for(call_type)
+            series["events"] += 1
+            if remote_call:
+                series["remote_calls"] += 1
+            if success:
+                series["success"] += 1
+            if skipped:
+                series["skipped"] += 1
+            if error:
+                series["errors"] += 1
+            series["audio_duration_seconds"] += audio_seconds
+            series["total_tokens"] += total_tokens
+
+            bucket = series["buckets"][bucket_index]
+            bucket["events"] += 1
+            if remote_call:
+                bucket["remote_calls"] += 1
+            if success:
+                bucket["success"] += 1
+            if skipped:
+                bucket["skipped"] += 1
+            if error:
+                bucket["errors"] += 1
+            bucket["audio_duration_seconds"] += audio_seconds
+            bucket["total_tokens"] += total_tokens
+
+            if remote_call:
+                model_key = (call_type, str(row.get("model") or "unknown"))
+                model_row = models.setdefault(
+                    model_key,
+                    {
+                        "call_type": call_type,
+                        "model": model_key[1],
+                        "remote_calls": 0,
+                        "success": 0,
+                        "errors": 0,
+                        "audio_duration_seconds": 0.0,
+                        "total_tokens": 0,
+                    },
+                )
+                model_row["remote_calls"] += 1
+                if success:
+                    model_row["success"] += 1
+                if error:
+                    model_row["errors"] += 1
+                model_row["audio_duration_seconds"] += audio_seconds
+                model_row["total_tokens"] += total_tokens
+
+            reason_key = (call_type, status, str(row.get("reason") or "unspecified"))
+            reason_row = reasons.setdefault(
+                reason_key,
+                {"call_type": call_type, "status": status, "reason": reason_key[2], "events": 0},
+            )
+            reason_row["events"] += 1
+
+        recent_events = [self._normalize_api_usage_event(row) for row in self.query_all(
+            """
+            SELECT e.*, r.name AS repeater_name
+            FROM api_usage_events e
+            LEFT JOIN repeaters r ON r.id = e.repeater_id
+            WHERE e.created_at >= ? AND e.created_at <= ?
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT ?
+            """,
+            (start_time.isoformat(timespec="seconds"), end_time.isoformat(timespec="seconds"), event_limit),
+        )]
+        return {
+            "start_time": start_time.isoformat(timespec="seconds"),
+            "end_time": end_time.isoformat(timespec="seconds"),
+            "bucket_minutes": int(bucket_seconds / 60),
+            "buckets": buckets,
+            "totals": totals,
+            "call_types": sorted(
+                series_by_type.values(),
+                key=lambda row: (
+                    {"transcription": 0, "summary": 1}.get(str(row["call_type"]), 9),
+                    str(row["call_type"]),
+                ),
+            ),
+            "models": sorted(
+                models.values(),
+                key=lambda row: (int(row["remote_calls"]), int(row["total_tokens"]), float(row["audio_duration_seconds"])),
+                reverse=True,
+            )[:10],
+            "reasons": sorted(reasons.values(), key=lambda row: int(row["events"]), reverse=True)[:10],
+            "recent_events": recent_events,
+        }
+
     def upsert_push_subscription(self, endpoint: str, p256dh: str, auth: str, user_agent: str = "") -> int:
         now = utc_now()
         with self._lock:
@@ -897,4 +1176,18 @@ class Database:
                 normalized[field] = parsed if isinstance(parsed, type(fallback)) else fallback
             elif value is None:
                 normalized[field] = fallback
+        return normalized
+
+    @staticmethod
+    def _normalize_api_usage_event(row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+        value = normalized.get("metadata")
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                parsed = {}
+            normalized["metadata"] = parsed if isinstance(parsed, dict) else {}
+        elif value is None:
+            normalized["metadata"] = {}
         return normalized
