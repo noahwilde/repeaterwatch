@@ -1,5 +1,12 @@
-const CACHE_NAME = "repeaterwatch-static-v59";
-const STATIC_ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json", "/icons/repeaterwatch.svg"];
+const CACHE_NAME = "repeaterwatch-static-v60";
+const STATIC_ASSETS = [
+  "/",
+  "/index.html",
+  "/styles.css?v=60",
+  "/app.js?v=60",
+  "/manifest.json",
+  "/icons/repeaterwatch.svg",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)));

@@ -49,6 +49,7 @@ const els = {
   activityChatMessages: document.querySelector("#activityChatMessages"),
   activityChatForm: document.querySelector("#activityChatForm"),
   activityChatInput: document.querySelector("#activityChatInput"),
+  activityChatSendBtn: document.querySelector("#activityChatSendBtn"),
   activityChatStatus: document.querySelector("#activityChatStatus"),
   clearActivityChatBtn: document.querySelector("#clearActivityChatBtn"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -1475,7 +1476,7 @@ async function sendActivityChatMessage() {
   els.activityChatInput.value = "";
   renderActivityChatMessages();
 
-  const submitButton = els.activityChatForm.querySelector("button[type='submit']");
+  const submitButton = els.activityChatSendBtn || els.activityChatForm.querySelector("button");
   activityChatInFlight = true;
   if (submitButton) submitButton.disabled = true;
   els.activityChatInput.disabled = true;
@@ -2348,7 +2349,7 @@ function setupActivityChatControls() {
   }
   if (!els.activityChatForm || !els.activityChatInput) return;
   renderActivityChatMessages();
-  const submitButton = els.activityChatForm.querySelector("button[type='submit']");
+  const submitButton = els.activityChatSendBtn || els.activityChatForm.querySelector("button");
   if (submitButton) {
     submitButton.addEventListener("click", (event) => {
       event.preventDefault();
