@@ -189,7 +189,7 @@ main {
   padding: 12px clamp(14px, 3vw, 32px) 40px;
 }
 
-.view-tabs {
+.navigation-shell {
   position: sticky;
   top: 0;
   z-index: 8;
@@ -203,10 +203,19 @@ main {
   border: 1px solid var(--line);
   border-radius: 8px;
   backdrop-filter: blur(10px);
+}
+
+.view-tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 6px;
+  overflow-x: auto;
   scrollbar-width: thin;
 }
 
-.view-tabs button {
+.view-tabs button,
+.settings-nav-button {
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -216,6 +225,13 @@ main {
   border-color: transparent;
   background: transparent;
   color: var(--green);
+}
+
+.settings-nav-button {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 8px;
 }
 
 .tab-icon {
@@ -231,13 +247,16 @@ main {
   text-overflow: ellipsis;
 }
 
-.view-tabs button:hover {
+.view-tabs button:hover,
+.settings-nav-button:hover {
   border-color: var(--tab-hover-border);
   background: var(--tab-hover-bg);
 }
 
 .view-tabs button.active,
-.view-tabs button[aria-current="page"] {
+.view-tabs button[aria-current="page"],
+.settings-nav-button.active,
+.settings-nav-button[aria-current="page"] {
   border-color: var(--button-bg);
   background: var(--button-bg);
   color: var(--button-ink);
@@ -1663,12 +1682,12 @@ audio {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .view-tabs {
+  .navigation-shell {
     position: fixed;
     inset: auto 0 0 0;
     z-index: 20;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) 54px;
     width: 100%;
     max-width: 100%;
     gap: 4px;
@@ -1682,7 +1701,16 @@ audio {
     box-shadow: var(--nav-shadow);
   }
 
-  .view-tabs button {
+  .view-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 0;
+    gap: 4px;
+    overflow: visible;
+  }
+
+  .view-tabs button,
+  .settings-nav-button {
     width: 100%;
     min-width: 0;
     min-height: 58px;
@@ -1694,6 +1722,10 @@ audio {
     border-radius: 8px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .settings-nav-button {
+    flex: 0 0 auto;
   }
 
   .tab-icon {

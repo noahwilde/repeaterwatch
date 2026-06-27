@@ -19,7 +19,7 @@ const callsignPattern = /\b(?:[AKNW][A-Z]?[0-9][A-Z]{1,3}|[A-Z]{1,2}[0-9][A-Z]{1
 const els = {
   pullRefresh: document.querySelector("#pullRefresh"),
   installPanel: document.querySelector("#installPanel"),
-  viewTabs: document.querySelector("#viewTabs"),
+  activityChatPanel: document.querySelector("#activityChatPanel"),
   activityRange: document.querySelector("#activityRange"),
   homeGlance: document.querySelector("#homeGlance"),
   repeaterForm: document.querySelector("#repeaterForm"),
@@ -147,7 +147,7 @@ let apiUsageRefreshInFlight = false;
 let editingRepeaterId = null;
 let editingRuleId = null;
 
-const views = new Set(["monitor", "transcripts", "summaries", "chat", "more"]);
+const views = new Set(["monitor", "transcripts", "summaries", "more"]);
 const legacyViews = new Map([
   ["review", "transcripts"],
   ["transcript", "transcripts"],
@@ -156,11 +156,16 @@ const legacyViews = new Map([
   ["live", "more"],
   ["recordings", "transcripts"],
   ["summary", "summaries"],
-  ["activity-chat", "chat"],
+  ["chat", "monitor"],
+  ["activity-chat", "monitor"],
   ["notifications", "more"],
   ["logs", "more"],
   ["settings", "more"],
 ]);
+
+function viewTabButtons() {
+  return document.querySelectorAll("[data-view-tab]");
+}
 
 function viewFromHash() {
   const view = window.location.hash.replace("#", "").trim();
@@ -168,8 +173,20 @@ function viewFromHash() {
   return views.has(view) ? view : "monitor";
 }
 
+function hashTargetsActivityChat() {
+  const view = window.location.hash.replace("#", "").trim();
+  return view === "chat" || view === "activity-chat";
+}
+
+function scrollActivityChatIntoView() {
+  if (!els.activityChatPanel) return;
+  window.requestAnimationFrame(() => {
+    els.activityChatPanel.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+}
+
 function updateViewHash(view) {
-  const nextHash = `#${view}`;
+  const nextHash = `#${view === "more" ? "settings" : view}`;
   if (window.location.hash !== nextHash) {
     history.pushState(null, "", nextHash);
   }
@@ -254,15 +271,13 @@ function setView(view, updateHash = true) {
   for (const section of document.querySelectorAll("[data-view]")) {
     section.hidden = section.dataset.view !== nextView;
   }
-  if (els.viewTabs) {
-    for (const button of els.viewTabs.querySelectorAll("[data-view-tab]")) {
-      const isActive = button.dataset.viewTab === nextView;
-      button.classList.toggle("active", isActive);
-      if (isActive) {
-        button.setAttribute("aria-current", "page");
-      } else {
-        button.removeAttribute("aria-current");
-      }
+  for (const button of viewTabButtons()) {
+    const isActive = button.dataset.viewTab === nextView;
+    button.classList.toggle("active", isActive);
+    if (isActive) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
     }
   }
   if (updateHash) updateViewHash(nextView);
@@ -273,7 +288,7 @@ function setView(view, updateHash = true) {
   if (nextView === "transcripts") {
     flushTranscriptRender();
   }
-  if (nextView === "chat") {
+  if (nextView === "monitor") {
     renderActivityChatMessages();
   }
 }
@@ -3110,7 +3125,7 @@ function setupPullToRefresh() {
     "touchstart",
     (event) => {
       if (pullRefreshing || event.touches.length !== 1 || window.scrollY > 2) return;
-      if (event.target.closest("input, select, button, textarea, audio, .view-tabs")) return;
+      if (event.target.closest("input, select, button, textarea, audio, .navigation-shell")) return;
       pullTracking = true;
       pullStartY = event.touches[0].clientY;
       pullDistance = 0;
@@ -3181,21 +3196,25 @@ function resetPullRefresh() {
   setPullRefreshState(0);
 }
 
-if (els.viewTabs) {
-  for (const button of els.viewTabs.querySelectorAll("[data-view-tab]")) {
-    button.addEventListener("click", () => {
-      setView(button.dataset.viewTab);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
-  }
+for (const button of viewTabButtons()) {
+  button.addEventListener("click", () => {
+    setView(button.dataset.viewTab);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
 }
 
-window.addEventListener("hashchange", () => setView(viewFromHash(), false));
-window.addEventListener("popstate", () => setView(viewFromHash(), false));
+function applyHashView() {
+  const shouldScrollToChat = hashTargetsActivityChat();
+  setView(viewFromHash(), false);
+  if (shouldScrollToChat) scrollActivityChatIntoView();
+}
+
+window.addEventListener("hashchange", applyHashView);
+window.addEventListener("popstate", applyHashView);
 
 applyDisplayTheme(displayTheme);
 applyTextSize(textSizePercent);
-setView(viewFromHash(), false);
+applyHashView();
 setupZoomGuard();
 setupCallsignLookup();
 setupPwa();
