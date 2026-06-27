@@ -43,7 +43,16 @@ def test_activity_chat_thread_is_persistent_and_pending_aware() -> None:
     assert 'const activityChatThreadStorageKey = "repeaterwatch.activityChatThread";' in js
     assert "loadActivityChatMessages()" in js
     assert "saveActivityChatMessages()" in js
+    assert "async function sendActivityChatMessage()" in js
+    assert 'submitButton.addEventListener("click"' in js
     assert 'status: "pending"' in js
     assert 'message.status !== "pending" && message.status !== "error"' in js
     assert "activityChatMessages.map((item) => item.id === pendingMessage.id ? replacement : item)" in js
-    assert "els.activityChatForm.requestSubmit()" in js
+
+
+def test_service_worker_forces_static_shell_refresh() -> None:
+    sw = (STATIC_ROOT / "sw.js").read_text(encoding="utf-8")
+
+    assert 'const CACHE_NAME = "repeaterwatch-static-v59";' in sw
+    assert "caches.delete(key)" in sw
+    assert "client.navigate(client.url)" in sw

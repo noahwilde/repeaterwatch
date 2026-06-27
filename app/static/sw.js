@@ -1,4 +1,4 @@
-const CACHE_NAME = "repeaterwatch-static-v58";
+const CACHE_NAME = "repeaterwatch-static-v59";
 const STATIC_ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json", "/icons/repeaterwatch.svg"];
 
 self.addEventListener("install", (event) => {
@@ -7,7 +7,13 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+      .then((clients) => Promise.all(clients.map((client) => client.navigate(client.url))))
+  );
 });
 
 self.addEventListener("fetch", (event) => {

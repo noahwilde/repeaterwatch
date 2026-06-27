@@ -1456,6 +1456,69 @@ function activityChatHistoryPayload() {
     .map((message) => ({ role: message.role, content: message.content }));
 }
 
+async function sendActivityChatMessage() {
+  if (!els.activityChatForm || !els.activityChatInput || activityChatInFlight) return;
+  const message = els.activityChatInput.value.trim();
+  if (!message) return;
+  const history = activityChatHistoryPayload();
+  const repeaterValue = els.activityChatRepeater ? els.activityChatRepeater.value : "";
+  const payload = {
+    message,
+    history,
+    hours: activityChatHours,
+    repeater_id: repeaterValue ? Number(repeaterValue) : null,
+  };
+  const userMessage = createActivityChatMessage("user", message);
+  const pendingMessage = createActivityChatMessage("assistant", "Checking recent activity...", { status: "pending" });
+  activityChatMessages.push(userMessage, pendingMessage);
+  saveActivityChatMessages();
+  els.activityChatInput.value = "";
+  renderActivityChatMessages();
+
+  const submitButton = els.activityChatForm.querySelector("button[type='submit']");
+  activityChatInFlight = true;
+  if (submitButton) submitButton.disabled = true;
+  els.activityChatInput.disabled = true;
+  if (els.activityChatStatus) {
+    els.activityChatStatus.textContent = "Checking recent activity...";
+  }
+  try {
+    const response = await fetchJson("/api/activity-chat", { method: "POST", body: JSON.stringify(payload) });
+    const sourceCounts = response.source_counts || {};
+    const replacement = createActivityChatMessage("assistant", response.answer || "No answer returned.", {
+      id: pendingMessage.id,
+      created_at: pendingMessage.created_at,
+      meta: {
+        model: response.model || response.backend || "model",
+        transcripts: Number(sourceCounts.transcripts || 0),
+        summaries: Number(sourceCounts.summaries || 0),
+      },
+    });
+    activityChatMessages = activityChatMessages.map((item) => item.id === pendingMessage.id ? replacement : item);
+    saveActivityChatMessages();
+    if (els.activityChatStatus) {
+      els.activityChatStatus.textContent = `${formatCount(sourceCounts.transcripts || 0)} transcript${sourceCounts.transcripts === 1 ? "" : "s"}, ${formatCount(sourceCounts.summaries || 0)} summar${sourceCounts.summaries === 1 ? "y" : "ies"} in context.`;
+    }
+  } catch (error) {
+    const replacement = createActivityChatMessage("assistant", error.message || "Activity chat failed.", {
+      id: pendingMessage.id,
+      created_at: pendingMessage.created_at,
+      status: "error",
+    });
+    activityChatMessages = activityChatMessages.map((item) => item.id === pendingMessage.id ? replacement : item);
+    saveActivityChatMessages();
+    if (els.activityChatStatus) {
+      els.activityChatStatus.textContent = error.message || "Activity chat failed.";
+    }
+  } finally {
+    activityChatInFlight = false;
+    if (submitButton) submitButton.disabled = false;
+    els.activityChatInput.disabled = false;
+    renderActivityChatMessages();
+    els.activityChatInput.focus();
+  }
+}
+
 function canonicalSummaryWindow(windowName) {
   const aliases = {
     last_15_minutes: "quarter_hour",
@@ -2285,77 +2348,21 @@ function setupActivityChatControls() {
   }
   if (!els.activityChatForm || !els.activityChatInput) return;
   renderActivityChatMessages();
+  const submitButton = els.activityChatForm.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      sendActivityChatMessage();
+    });
+  }
   els.activityChatInput.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
     event.preventDefault();
-    if (typeof els.activityChatForm.requestSubmit === "function") {
-      els.activityChatForm.requestSubmit();
-    } else {
-      els.activityChatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    }
+    sendActivityChatMessage();
   });
   els.activityChatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (activityChatInFlight) return;
-    const message = els.activityChatInput.value.trim();
-    if (!message) return;
-    const history = activityChatHistoryPayload();
-    const repeaterValue = els.activityChatRepeater ? els.activityChatRepeater.value : "";
-    const payload = {
-      message,
-      history,
-      hours: activityChatHours,
-      repeater_id: repeaterValue ? Number(repeaterValue) : null,
-    };
-    const userMessage = createActivityChatMessage("user", message);
-    const pendingMessage = createActivityChatMessage("assistant", "Checking recent activity...", { status: "pending" });
-    activityChatMessages.push(userMessage, pendingMessage);
-    saveActivityChatMessages();
-    els.activityChatInput.value = "";
-    renderActivityChatMessages();
-
-    const submitButton = els.activityChatForm.querySelector("button[type='submit']");
-    activityChatInFlight = true;
-    if (submitButton) submitButton.disabled = true;
-    els.activityChatInput.disabled = true;
-    if (els.activityChatStatus) {
-      els.activityChatStatus.textContent = "Checking recent activity...";
-    }
-    try {
-      const response = await fetchJson("/api/activity-chat", { method: "POST", body: JSON.stringify(payload) });
-      const sourceCounts = response.source_counts || {};
-      const replacement = createActivityChatMessage("assistant", response.answer || "No answer returned.", {
-        id: pendingMessage.id,
-        created_at: pendingMessage.created_at,
-        meta: {
-          model: response.model || response.backend || "model",
-          transcripts: Number(sourceCounts.transcripts || 0),
-          summaries: Number(sourceCounts.summaries || 0),
-        },
-      });
-      activityChatMessages = activityChatMessages.map((item) => item.id === pendingMessage.id ? replacement : item);
-      saveActivityChatMessages();
-      if (els.activityChatStatus) {
-        els.activityChatStatus.textContent = `${formatCount(sourceCounts.transcripts || 0)} transcript${sourceCounts.transcripts === 1 ? "" : "s"}, ${formatCount(sourceCounts.summaries || 0)} summar${sourceCounts.summaries === 1 ? "y" : "ies"} in context.`;
-      }
-    } catch (error) {
-      const replacement = createActivityChatMessage("assistant", error.message || "Activity chat failed.", {
-        id: pendingMessage.id,
-        created_at: pendingMessage.created_at,
-        status: "error",
-      });
-      activityChatMessages = activityChatMessages.map((item) => item.id === pendingMessage.id ? replacement : item);
-      saveActivityChatMessages();
-      if (els.activityChatStatus) {
-        els.activityChatStatus.textContent = error.message || "Activity chat failed.";
-      }
-    } finally {
-      activityChatInFlight = false;
-      if (submitButton) submitButton.disabled = false;
-      els.activityChatInput.disabled = false;
-      renderActivityChatMessages();
-      els.activityChatInput.focus();
-    }
+    sendActivityChatMessage();
   });
 }
 
