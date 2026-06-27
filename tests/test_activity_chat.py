@@ -76,7 +76,10 @@ def test_activity_chat_prompt_uses_recent_grounded_sources(tmp_path):
         prompt = build_activity_chat_prompt(context, max_context_chars=30_000)
 
         assert "Use only the supplied Recent Activity Context as factual evidence" in ACTIVITY_CHAT_SYSTEM_PROMPT
-        assert "Discuss only things that were actually said" in ACTIVITY_CHAT_SYSTEM_PROMPT
+        assert "You may reason from the supplied context" in ACTIVITY_CHAT_SYSTEM_PROMPT
+        assert "provide practical insights" in ACTIVITY_CHAT_SYSTEM_PROMPT
+        assert "based on the setup time mentioned on W0GQ" in ACTIVITY_CHAT_SYSTEM_PROMPT
+        assert "Do not invent unsupported callsigns" in ACTIVITY_CHAT_SYSTEM_PROMPT
         assert "Use plain text only" in ACTIVITY_CHAT_SYSTEM_PROMPT
         assert "Do not use Markdown" in ACTIVITY_CHAT_SYSTEM_PROMPT
         assert "or emoji" in ACTIVITY_CHAT_SYSTEM_PROMPT

@@ -158,7 +158,7 @@ class ActivityChatConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key_env: str = "OPENAI_API_KEY"
     timezone: str = "local"
-    prompt_version: str = "repeaterwatch-activity-chat-v2"
+    prompt_version: str = "repeaterwatch-activity-chat-v3"
     default_hours: int = Field(default=24, ge=1, le=24 * 30)
     max_history_messages: int = Field(default=12, ge=0, le=40)
     max_transcripts: int = Field(default=60, ge=1, le=250)
