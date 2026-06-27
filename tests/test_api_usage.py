@@ -56,24 +56,44 @@ def test_api_usage_report_groups_call_types_and_totals(tmp_path):
                 "reason": "automated_only",
             }
         )
+        db.add_api_usage_event(
+            {
+                "created_at": (now - timedelta(minutes=15)).isoformat(timespec="seconds"),
+                "provider": "openai-compatible",
+                "call_type": "activity_chat",
+                "operation": "manual",
+                "model": "gpt-5.4-nano",
+                "status": "success",
+                "input_count": 4,
+                "prompt_tokens": 80,
+                "completion_tokens": 20,
+                "total_tokens": 100,
+                "elapsed_ms": 500,
+                "reason": "remote_activity_chat",
+            }
+        )
 
         report = db.api_usage_report(now=now, hours=6, bucket_minutes=60)
         summary = next(row for row in report["call_types"] if row["call_type"] == "summary")
         transcription = next(row for row in report["call_types"] if row["call_type"] == "transcription")
+        activity_chat = next(row for row in report["call_types"] if row["call_type"] == "activity_chat")
 
-        assert report["totals"]["events"] == 3
-        assert report["totals"]["remote_calls"] == 2
+        assert report["totals"]["events"] == 4
+        assert report["totals"]["remote_calls"] == 3
         assert report["totals"]["skipped"] == 1
         assert report["totals"]["audio_duration_seconds"] == 12.5
-        assert report["totals"]["total_tokens"] == 150
+        assert report["totals"]["total_tokens"] == 250
         assert summary["remote_calls"] == 1
         assert summary["skipped"] == 1
         assert summary["total_tokens"] == 150
         assert transcription["remote_calls"] == 1
         assert transcription["audio_duration_seconds"] == 12.5
+        assert activity_chat["remote_calls"] == 1
+        assert activity_chat["total_tokens"] == 100
+        assert [row["call_type"] for row in report["call_types"]] == ["transcription", "summary", "activity_chat"]
         assert report["models"][0]["model"] == "gpt-4.1-mini"
         assert any(reason["reason"] == "automated_only" for reason in report["reasons"])
-        assert len(report["recent_events"]) == 3
+        assert len(report["recent_events"]) == 4
     finally:
         db.close()
 

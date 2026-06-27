@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.activity_chat import router as activity_chat_router
 from app.api.callsigns import router as callsigns_router
 from app.api.notifications import router as notifications_router
 from app.api.live import router as live_router
@@ -22,6 +23,7 @@ from app.config import AppConfig, load_config
 from app.db import Database
 from app.notify.webpush import KeywordEngine, NotificationService, ReceiverHealthNotifier
 from app.sdr.manager import ReceiverManager
+from app.summarize.chat import ActivityChatService
 from app.summarize.llm import SummaryService, SummaryWorker
 from app.transcribe.whisper import TranscriptionWorker
 
@@ -52,6 +54,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
         keyword_engine = KeywordEngine(db, notification_service)
         receiver_manager = ReceiverManager(db, config, data_dir, receiver_health_notifier)
         summary_service = SummaryService(db, config)
+        activity_chat_service = ActivityChatService(db, config)
         transcription_worker = TranscriptionWorker(db, config, keyword_engine)
         summary_worker = SummaryWorker(db, config, keyword_engine)
 
@@ -64,6 +67,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
         app.state.keyword_engine = keyword_engine
         app.state.receiver_manager = receiver_manager
         app.state.summary_service = summary_service
+        app.state.activity_chat_service = activity_chat_service
         app.state.transcription_worker = transcription_worker
         app.state.summary_worker = summary_worker
 
@@ -92,6 +96,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(activity_chat_router)
     app.include_router(callsigns_router)
     app.include_router(system_router)
     app.include_router(live_router)

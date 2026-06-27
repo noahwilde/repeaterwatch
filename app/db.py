@@ -690,6 +690,35 @@ class Database:
             (limit,),
         )
 
+    def summaries_between(
+        self,
+        start_time: str,
+        end_time: str,
+        repeater_id: int | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        limit = max(0, int(limit))
+        if limit == 0:
+            return []
+        params: list[Any] = [start_time, end_time]
+        repeater_clause = ""
+        if repeater_id is not None:
+            repeater_clause = "AND s.repeater_id = ?"
+            params.append(repeater_id)
+        params.append(limit)
+        rows = self.query_all(
+            f"""
+            SELECT s.*, r.name AS repeater_name
+            FROM summaries s
+            LEFT JOIN repeaters r ON r.id = s.repeater_id
+            WHERE s.end_time >= ? AND s.start_time <= ? {repeater_clause}
+            ORDER BY s.start_time DESC, s.id DESC
+            LIMIT ?
+            """,
+            params,
+        )
+        return list(reversed(rows))
+
     def get_summary(self, summary_id: int) -> dict[str, Any] | None:
         return self.query_one("SELECT * FROM summaries WHERE id = ?", (summary_id,))
 
@@ -1050,7 +1079,7 @@ class Database:
             "call_types": sorted(
                 series_by_type.values(),
                 key=lambda row: (
-                    {"transcription": 0, "summary": 1}.get(str(row["call_type"]), 9),
+                    {"transcription": 0, "summary": 1, "activity_chat": 2}.get(str(row["call_type"]), 9),
                     str(row["call_type"]),
                 ),
             ),

@@ -67,6 +67,19 @@ skip_automated_only = true
 schedule_delay_seconds = 120.0
 poll_seconds = 60.0
 
+[activity_chat]
+backend = "noop"
+model = "gpt-5.4-nano"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+timezone = "local"
+prompt_version = "repeaterwatch-activity-chat-v1"
+default_hours = 24
+max_history_messages = 12
+max_transcripts = 60
+max_summaries = 20
+max_context_chars = 30000
+
 [notifications]
 enabled = true
 vapid_public_key = ""

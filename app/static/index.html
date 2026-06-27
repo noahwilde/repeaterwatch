@@ -42,6 +42,10 @@
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v3H5zm0 5h14v2H5zm0 4h10v2H5zm0 4h8v2H5z" /></svg>
           <span class="tab-label">Summary</span>
         </button>
+        <button type="button" data-view-tab="chat" aria-label="Activity Chat">
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8.8L4 20.2zm2 2v8.3l2-1.3h10V7zm3 3h6v2H9z" /></svg>
+          <span class="tab-label">Chat</span>
+        </button>
         <button type="button" data-view-tab="more" aria-label="More">
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v2H4zm0 4h16v2H4zm0 4h16v2H4z" /></svg>
           <span class="tab-label">More</span>
@@ -286,6 +290,41 @@
           </div>
         </section>
 
+        <section class="panel wide view-section" data-view="chat">
+          <div class="panel-head">
+            <h2>Activity Chat</h2>
+            <button id="clearActivityChatBtn" class="secondary" type="button">Clear</button>
+          </div>
+          <div class="chat-workspace">
+            <div class="chat-scope">
+              <label>
+                <span>Range</span>
+                <select id="activityChatRange" name="activity_chat_range" aria-label="Activity chat range">
+                  <option value="1">1 hour</option>
+                  <option value="6">6 hours</option>
+                  <option value="24" selected>24 hours</option>
+                  <option value="72">3 days</option>
+                  <option value="168">7 days</option>
+                  <option value="720">30 days</option>
+                </select>
+              </label>
+              <label>
+                <span>Scope</span>
+                <select id="activityChatRepeater" name="repeater_id">
+                  <option value="">All repeaters</option>
+                </select>
+              </label>
+            </div>
+            <div id="activityChatMessages" class="chat-messages" aria-live="polite"></div>
+            <form id="activityChatForm" class="chat-compose">
+              <label class="sr-only" for="activityChatInput">Message</label>
+              <textarea id="activityChatInput" name="message" rows="2" placeholder="Ask about recent activity"></textarea>
+              <button type="submit">Send</button>
+            </form>
+            <p id="activityChatStatus" class="muted form-status" aria-live="polite"></p>
+          </div>
+        </section>
+
         <details class="panel view-section collapsible-panel" data-view="more">
           <summary class="panel-head collapsible-head">
             <h2>Keyword Notifications</h2>
@@ -450,6 +489,22 @@
               <label class="check">
                 <input name="skip_automated_only" type="checkbox" />
                 <span>Skip automated-only summary calls</span>
+              </label>
+              <label>
+                <span>Activity chat backend</span>
+                <select name="activity_chat_backend">
+                  <option value="noop">Disabled</option>
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </label>
+              <label>
+                <span>Activity chat model</span>
+                <input name="activity_chat_model" placeholder="gpt-5.4-nano" />
+              </label>
+              <label>
+                <span>Activity chat default hours</span>
+                <input name="activity_chat_default_hours" type="number" min="1" max="720" step="1" />
               </label>
               <button type="submit">Save API settings</button>
             </form>

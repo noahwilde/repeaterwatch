@@ -152,6 +152,20 @@ class SummaryConfig(BaseModel):
     poll_seconds: float = Field(default=60.0, ge=10)
 
 
+class ActivityChatConfig(BaseModel):
+    backend: Literal["noop", "openai-compatible", "ollama"] = "noop"
+    model: str = "gpt-5.4-nano"
+    base_url: str = "https://api.openai.com/v1"
+    api_key_env: str = "OPENAI_API_KEY"
+    timezone: str = "local"
+    prompt_version: str = "repeaterwatch-activity-chat-v1"
+    default_hours: int = Field(default=24, ge=1, le=24 * 30)
+    max_history_messages: int = Field(default=12, ge=0, le=40)
+    max_transcripts: int = Field(default=60, ge=1, le=250)
+    max_summaries: int = Field(default=20, ge=0, le=100)
+    max_context_chars: int = Field(default=30_000, ge=4_000, le=120_000)
+
+
 class NotificationConfig(BaseModel):
     enabled: bool = True
     vapid_public_key: str = ""
@@ -179,6 +193,7 @@ class AppConfig(BaseModel):
     vox: VoxConfig = Field(default_factory=VoxConfig)
     transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
+    activity_chat: ActivityChatConfig = Field(default_factory=ActivityChatConfig)
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
@@ -231,6 +246,7 @@ def public_config(config: AppConfig) -> dict[str, Any]:
     for section, field in (
         ("transcription", "remote_api_key_env"),
         ("summary", "api_key_env"),
+        ("activity_chat", "api_key_env"),
     ):
         value = data.get(section, {}).get(field, "")
         if isinstance(value, str) and (value.startswith("sk-") or len(value) > 80):

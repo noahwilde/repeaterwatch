@@ -603,6 +603,7 @@ textarea {
 .form-grid label span,
 .inline-form label span,
 .summary-generate label span,
+.chat-scope label span,
 .field-label {
   display: block;
   color: var(--muted);
@@ -1085,6 +1086,74 @@ textarea {
   border-left: 3px solid var(--teal);
   background: var(--control-bg);
   border-radius: 6px;
+}
+
+.chat-workspace {
+  display: grid;
+  gap: 12px;
+}
+
+.chat-scope {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(180px, 1fr);
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.chat-messages {
+  display: grid;
+  gap: 10px;
+  max-height: min(58vh, 620px);
+  overflow: auto;
+  padding: 2px;
+}
+
+.chat-message {
+  display: grid;
+  gap: 6px;
+  max-width: min(760px, 92%);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.chat-message.user {
+  justify-self: end;
+  border-color: var(--badge-border);
+  background: var(--control-bg);
+}
+
+.chat-message.assistant {
+  justify-self: start;
+}
+
+.chat-message-role {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.chat-message-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.chat-compose textarea {
+  min-height: 52px;
 }
 
 .api-usage-stats {
@@ -1599,7 +1668,7 @@ audio {
     inset: auto 0 0 0;
     z-index: 20;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     width: 100%;
     max-width: 100%;
     gap: 4px;
@@ -1648,7 +1717,9 @@ audio {
     grid-template-columns: 1fr;
   }
 
-  .summary-generate {
+  .summary-generate,
+  .chat-scope,
+  .chat-compose {
     grid-template-columns: 1fr;
   }
 
@@ -1728,6 +1799,10 @@ audio {
   .summary-card-foot {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .chat-message {
+    max-width: 100%;
   }
 
   .modal {

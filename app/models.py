@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -84,6 +86,18 @@ class PushSubscriptionIn(BaseModel):
 
 class SummaryRequest(BaseModel):
     window_name: str = "quarter_hour"
+    repeater_id: int | None = None
+
+
+class ActivityChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class ActivityChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ActivityChatMessage] = Field(default_factory=list, max_length=40)
+    hours: int = Field(default=24, ge=1, le=24 * 30)
     repeater_id: int | None = None
 
 

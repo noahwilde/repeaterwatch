@@ -124,6 +124,9 @@ async def update_config(payload: dict, request: Request) -> dict:
     request.app.state.receiver_manager.config = updated
     request.app.state.notification_service.config = updated
     request.app.state.summary_service.config = updated
+    activity_chat_service = getattr(request.app.state, "activity_chat_service", None)
+    if activity_chat_service is not None:
+        activity_chat_service.config = updated
     request.app.state.transcription_worker.config = updated
     request.app.state.transcription_worker.service.config = updated
     request.app.state.summary_worker.config = updated
@@ -144,12 +147,17 @@ async def update_audio_settings(payload: dict, request: Request) -> dict:
         data["transcription"] = {**data["transcription"], **payload["transcription"]}
     if "summary" in payload:
         data["summary"] = {**data["summary"], **payload["summary"]}
+    if "activity_chat" in payload:
+        data["activity_chat"] = {**data["activity_chat"], **payload["activity_chat"]}
     updated = AppConfig.model_validate(data)
     save_config(updated, request.app.state.config_path)
     request.app.state.config = updated
     request.app.state.receiver_manager.config = updated
     request.app.state.notification_service.config = updated
     request.app.state.summary_service.config = updated
+    activity_chat_service = getattr(request.app.state, "activity_chat_service", None)
+    if activity_chat_service is not None:
+        activity_chat_service.config = updated
     request.app.state.transcription_worker.config = updated
     request.app.state.transcription_worker.service.config = updated
     request.app.state.summary_worker.config = updated

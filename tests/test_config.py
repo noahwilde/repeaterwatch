@@ -65,6 +65,8 @@ def test_ai_usage_defaults_reduce_unnecessary_remote_calls():
     assert config.summary.scheduled_windows == ["hour", "day"]
     assert config.summary.per_repeater_scheduled is False
     assert config.summary.skip_automated_only is True
+    assert config.activity_chat.backend == "noop"
+    assert config.activity_chat.model == "gpt-5.4-nano"
 
 
 def test_duplicate_repeater_names_rejected():

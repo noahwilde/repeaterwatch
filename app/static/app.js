@@ -1,12 +1,14 @@
 const dashboardUrl = "/api/dashboard";
 const activityRangeStorageKey = "repeaterwatch.activityHours";
 const apiUsageRangeStorageKey = "repeaterwatch.apiUsageHours";
+const activityChatRangeStorageKey = "repeaterwatch.activityChatHours";
 const textSizeStorageKey = "repeaterwatch.textSize";
 const themeStorageKey = "repeaterwatch.theme";
 const lightThemeColor = "#24413a";
 const darkThemeColor = "#111113";
 const activityHourOptions = new Set([1, 6, 12, 24, 72, 168]);
 const apiUsageHourOptions = new Set([24, 72, 168, 720]);
+const activityChatHourOptions = new Set([1, 6, 12, 24, 72, 168, 720]);
 const textSizeMin = 85;
 const textSizeMax = 125;
 const textSizeStep = 5;
@@ -40,6 +42,13 @@ const els = {
   summaryStats: document.querySelector("#summaryStats"),
   summaryStatus: document.querySelector("#summaryStatus"),
   adHocSummary: document.querySelector("#adHocSummary"),
+  activityChatRange: document.querySelector("#activityChatRange"),
+  activityChatRepeater: document.querySelector("#activityChatRepeater"),
+  activityChatMessages: document.querySelector("#activityChatMessages"),
+  activityChatForm: document.querySelector("#activityChatForm"),
+  activityChatInput: document.querySelector("#activityChatInput"),
+  activityChatStatus: document.querySelector("#activityChatStatus"),
+  clearActivityChatBtn: document.querySelector("#clearActivityChatBtn"),
   settingsForm: document.querySelector("#settingsForm"),
   apiUsageRange: document.querySelector("#apiUsageRange"),
   refreshApiUsageBtn: document.querySelector("#refreshApiUsageBtn"),
@@ -108,6 +117,7 @@ let listenStatusMessage = "";
 let activeView = "";
 let activityHours = loadActivityHours();
 let apiUsageHours = loadApiUsageHours();
+let activityChatHours = loadActivityChatHours();
 let pullStartY = 0;
 let pullDistance = 0;
 let pullTracking = false;
@@ -129,13 +139,15 @@ let currentSummaries = [];
 let currentRepeaters = [];
 let summarySearchTerm = "";
 let adHocSummary = null;
+let activityChatMessages = [];
+let activityChatInFlight = false;
 let dashboardRefreshInFlight = false;
 let dashboardRefreshPending = false;
 let apiUsageRefreshInFlight = false;
 let editingRepeaterId = null;
 let editingRuleId = null;
 
-const views = new Set(["monitor", "transcripts", "summaries", "more"]);
+const views = new Set(["monitor", "transcripts", "summaries", "chat", "more"]);
 const legacyViews = new Map([
   ["review", "transcripts"],
   ["transcript", "transcripts"],
@@ -144,6 +156,7 @@ const legacyViews = new Map([
   ["live", "more"],
   ["recordings", "transcripts"],
   ["summary", "summaries"],
+  ["activity-chat", "chat"],
   ["notifications", "more"],
   ["logs", "more"],
   ["settings", "more"],
@@ -170,6 +183,11 @@ function loadActivityHours() {
 function loadApiUsageHours() {
   const value = Number(window.localStorage.getItem(apiUsageRangeStorageKey) || 24);
   return apiUsageHourOptions.has(value) ? value : 24;
+}
+
+function loadActivityChatHours() {
+  const value = Number(window.localStorage.getItem(activityChatRangeStorageKey) || 24);
+  return activityChatHourOptions.has(value) ? value : 24;
 }
 
 function normalizeTextSize(value) {
@@ -254,6 +272,9 @@ function setView(view, updateHash = true) {
   }
   if (nextView === "transcripts") {
     flushTranscriptRender();
+  }
+  if (nextView === "chat") {
+    renderActivityChatMessages();
   }
 }
 
@@ -438,6 +459,7 @@ function renderDashboard(data) {
   renderSdrWindow(data.sdr_window);
   renderRecordings(data.recordings, data.transcripts, data.keyword_rules);
   renderSummaries(data.summaries, data.repeaters);
+  renderActivityChatScopeOptions(data.repeaters);
   renderRules(data.keyword_rules);
   renderEvents(data.notification_events);
   renderSettings(data.config);
@@ -1296,6 +1318,65 @@ function renderSummaryScopeOptions(repeaters) {
   }
 }
 
+function renderActivityChatScopeOptions(repeaters) {
+  if (!els.activityChatRepeater) return;
+  const nextValues = ["", ...repeaters.map((repeater) => String(repeater.id))];
+  const currentValues = [...els.activityChatRepeater.options].map((option) => option.value);
+  const labelsMatch = repeaters.every((repeater) => {
+    const option = [...els.activityChatRepeater.options].find((candidate) => candidate.value === String(repeater.id));
+    return option && option.textContent === repeater.name;
+  });
+  if (nextValues.length === currentValues.length && nextValues.every((value, index) => value === currentValues[index]) && labelsMatch) {
+    return;
+  }
+  const currentValue = els.activityChatRepeater.value;
+  els.activityChatRepeater.innerHTML = `<option value="">All repeaters</option>`;
+  for (const repeater of repeaters) {
+    const option = document.createElement("option");
+    option.value = String(repeater.id);
+    option.textContent = repeater.name;
+    els.activityChatRepeater.appendChild(option);
+  }
+  if ([...els.activityChatRepeater.options].some((option) => option.value === currentValue)) {
+    els.activityChatRepeater.value = currentValue;
+  }
+}
+
+function renderActivityChatMessages() {
+  if (!els.activityChatMessages) return;
+  els.activityChatMessages.innerHTML = "";
+  if (!activityChatMessages.length) {
+    setEmpty(els.activityChatMessages, "No chat messages yet.");
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const message of activityChatMessages) {
+    const row = document.createElement("article");
+    row.className = `chat-message ${message.role === "user" ? "user" : "assistant"}`;
+    const meta = message.role === "assistant" && message.meta
+      ? `<div class="meta">
+          <span class="pill">${escapeHtml(message.meta.model || "model")}</span>
+          <span class="pill">${formatCount(message.meta.transcripts || 0)} transcript${message.meta.transcripts === 1 ? "" : "s"}</span>
+          <span class="pill">${formatCount(message.meta.summaries || 0)} summar${message.meta.summaries === 1 ? "y" : "ies"}</span>
+        </div>`
+      : "";
+    row.innerHTML = `
+      <p class="chat-message-role">${message.role === "user" ? "You" : "Assistant"}</p>
+      <p class="chat-message-text">${callsignTextHtml(message.content)}</p>
+      ${meta}
+    `;
+    fragment.appendChild(row);
+  }
+  els.activityChatMessages.appendChild(fragment);
+  els.activityChatMessages.scrollTop = els.activityChatMessages.scrollHeight;
+}
+
+function activityChatHistoryPayload() {
+  return activityChatMessages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => ({ role: message.role, content: message.content }));
+}
+
 function canonicalSummaryWindow(windowName) {
   const aliases = {
     last_15_minutes: "quarter_hour",
@@ -1884,6 +1965,7 @@ function formatApiCallType(value) {
   const labels = {
     transcription: "Transcriptions",
     summary: "Summaries",
+    activity_chat: "Activity chat",
   };
   return labels[value] || String(value || "API").replaceAll("_", " ");
 }
@@ -1893,6 +1975,10 @@ function formatApiReason(value) {
     remote_transcription: "Remote transcription",
     short_recording: "Short recording guardrail",
     remote_summary: "Remote summary",
+    remote_activity_chat: "Remote activity chat",
+    ollama_activity_chat: "Ollama activity chat",
+    missing_api_key: "Missing API key",
+    disabled: "Disabled",
     automated_only: "Automated-only guardrail",
     not_enough_traffic: "Not enough traffic",
     recording: "Recording",
@@ -1954,6 +2040,9 @@ function renderApiUsageSettings(config) {
   form.elements.summary_window_day.checked = scheduledWindows.has("day");
   form.elements.per_repeater_scheduled.checked = Boolean(config.summary.per_repeater_scheduled);
   form.elements.skip_automated_only.checked = Boolean(config.summary.skip_automated_only);
+  form.elements.activity_chat_backend.value = config.activity_chat.backend || "noop";
+  form.elements.activity_chat_model.value = config.activity_chat.model || "gpt-5.4-nano";
+  form.elements.activity_chat_default_hours.value = config.activity_chat.default_hours || 24;
 }
 
 function formData(form) {
@@ -2094,6 +2183,80 @@ function setupSummaryControls() {
       }
     });
   }
+}
+
+function setupActivityChatControls() {
+  if (els.activityChatRange) {
+    els.activityChatRange.value = String(activityChatHours);
+    els.activityChatRange.addEventListener("change", () => {
+      const nextHours = Number(els.activityChatRange.value);
+      activityChatHours = activityChatHourOptions.has(nextHours) ? nextHours : 24;
+      els.activityChatRange.value = String(activityChatHours);
+      window.localStorage.setItem(activityChatRangeStorageKey, String(activityChatHours));
+    });
+  }
+  if (els.clearActivityChatBtn) {
+    els.clearActivityChatBtn.addEventListener("click", () => {
+      activityChatMessages = [];
+      if (els.activityChatStatus) els.activityChatStatus.textContent = "";
+      renderActivityChatMessages();
+      if (els.activityChatInput) els.activityChatInput.focus();
+    });
+  }
+  if (!els.activityChatForm || !els.activityChatInput) return;
+  renderActivityChatMessages();
+  els.activityChatForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (activityChatInFlight) return;
+    const message = els.activityChatInput.value.trim();
+    if (!message) return;
+    const history = activityChatHistoryPayload();
+    const repeaterValue = els.activityChatRepeater ? els.activityChatRepeater.value : "";
+    const payload = {
+      message,
+      history,
+      hours: activityChatHours,
+      repeater_id: repeaterValue ? Number(repeaterValue) : null,
+    };
+    activityChatMessages.push({ role: "user", content: message });
+    els.activityChatInput.value = "";
+    renderActivityChatMessages();
+
+    const submitButton = els.activityChatForm.querySelector("button[type='submit']");
+    activityChatInFlight = true;
+    if (submitButton) submitButton.disabled = true;
+    els.activityChatInput.disabled = true;
+    if (els.activityChatStatus) {
+      els.activityChatStatus.textContent = "Asking activity chat...";
+    }
+    try {
+      const response = await fetchJson("/api/activity-chat", { method: "POST", body: JSON.stringify(payload) });
+      const sourceCounts = response.source_counts || {};
+      activityChatMessages.push({
+        role: "assistant",
+        content: response.answer || "",
+        meta: {
+          model: response.model || response.backend || "model",
+          transcripts: Number(sourceCounts.transcripts || 0),
+          summaries: Number(sourceCounts.summaries || 0),
+        },
+      });
+      if (els.activityChatStatus) {
+        els.activityChatStatus.textContent = `${formatCount(sourceCounts.transcripts || 0)} transcript${sourceCounts.transcripts === 1 ? "" : "s"}, ${formatCount(sourceCounts.summaries || 0)} summar${sourceCounts.summaries === 1 ? "y" : "ies"} in context.`;
+      }
+    } catch (error) {
+      activityChatMessages.push({ role: "assistant", content: error.message || "Activity chat failed." });
+      if (els.activityChatStatus) {
+        els.activityChatStatus.textContent = error.message || "Activity chat failed.";
+      }
+    } finally {
+      activityChatInFlight = false;
+      if (submitButton) submitButton.disabled = false;
+      els.activityChatInput.disabled = false;
+      renderActivityChatMessages();
+      els.activityChatInput.focus();
+    }
+  });
 }
 
 function setupDisplaySettings() {
@@ -2282,6 +2445,11 @@ if (els.apiUsageSettingsForm) {
             per_repeater_scheduled: els.apiUsageSettingsForm.elements.per_repeater_scheduled.checked,
             skip_automated_only: els.apiUsageSettingsForm.elements.skip_automated_only.checked,
             schedule_delay_seconds: Number(data.summary_schedule_delay_seconds),
+          },
+          activity_chat: {
+            backend: data.activity_chat_backend || "noop",
+            model: data.activity_chat_model || "gpt-5.4-nano",
+            default_hours: Number(data.activity_chat_default_hours || 24),
           },
         }),
       })
@@ -3036,6 +3204,7 @@ setupActivityRange();
 setupApiUsageControls();
 setupTranscriptSearch();
 setupSummaryControls();
+setupActivityChatControls();
 setupDisplaySettings();
 loadTrafficAlertSettings();
 refreshDashboard();

@@ -8,6 +8,7 @@ from app.config import AppConfig
 from app.db import Database
 from app.notify.webpush import KeywordEngine, NotificationService
 from app.sdr.manager import ReceiverManager
+from app.summarize.chat import ActivityChatService
 from app.summarize.llm import SummaryService
 
 
@@ -41,3 +42,7 @@ def get_keyword_engine(request: Request) -> KeywordEngine:
 
 def get_summary_service(request: Request) -> SummaryService:
     return request.app.state.summary_service
+
+
+def get_activity_chat_service(request: Request) -> ActivityChatService:
+    return request.app.state.activity_chat_service

@@ -32,6 +32,7 @@ Phone-width More page:
 - Transcribes recordings with `noop`, local `faster-whisper`, or an OpenAI-compatible transcription API.
 - Normalizes common ham-radio callsign speech such as "kilo zero xray yankee zulu" into `K0XYZ`.
 - Generates scheduled summaries for 15-minute, hourly, and daily windows.
+- Adds an Activity Chat page for asking a configured model about recent transcripts and saved summaries.
 - Shows transcripts and summaries as searchable timelines.
 - Sends standards-based Web Push notifications for keyword rules and non-automated traffic.
 - Runs as a local PWA on desktop or mobile, including iOS Home Screen web apps.
@@ -129,9 +130,17 @@ scheduled_windows = ["hour", "day"]
 per_repeater_scheduled = false
 skip_automated_only = true
 schedule_delay_seconds = 120.0
+
+[activity_chat]
+backend = "openai-compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5.4-nano"
+default_hours = 24
 ```
 
-For local-only operation, leave both backends as `noop` or use `faster-whisper` for transcription and Ollama for summaries.
+For local-only operation, leave remote AI backends as `noop` or use `faster-whisper` for transcription and Ollama for summaries or activity chat.
+Activity Chat is manual and stateless: the browser sends the current chat thread plus the selected recent time range, and the server prompts the model to answer only from transcripts and saved summaries that were actually recorded.
 
 ## Minimizing API Usage
 
@@ -144,8 +153,9 @@ OpenAI-compatible transcription and summary backends are optional. To reduce unn
 - Keep `[summary].per_repeater_scheduled = false` unless you need separate scheduled summaries for every repeater. Manual per-repeater summaries still work from the Summary tab.
 - Keep `[summary].skip_automated_only = true` so windows containing only repeater IDs, welcome messages, and tone announcements do not call the summary model.
 - Raise `[summary].min_transcripts` to `2` or `3` if one isolated transmission is not worth summarizing automatically.
+- Leave `[activity_chat].backend = "noop"` unless you want manual chat turns to call a model. Use a cheaper conversational model such as `gpt-5.4-nano` for this path.
 
-These same controls are available in the More tab under API Usage. That panel also tracks remote transcription and summary calls over time, including skipped guardrail events, errors, returned token counts when available, and audio seconds sent for transcription.
+These same controls are available in the More tab under API Usage. That panel also tracks remote transcription, summary, and activity chat calls over time, including skipped guardrail events, errors, returned token counts when available, and audio seconds sent for transcription.
 
 ## Web Push Notifications
 

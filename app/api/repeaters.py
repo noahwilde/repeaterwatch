@@ -15,6 +15,9 @@ def _apply_runtime_config(request: Request, config: AppConfig) -> None:
     request.app.state.receiver_manager.config = config
     request.app.state.notification_service.config = config
     request.app.state.summary_service.config = config
+    activity_chat_service = getattr(request.app.state, "activity_chat_service", None)
+    if activity_chat_service is not None:
+        activity_chat_service.config = config
     request.app.state.transcription_worker.config = config
     request.app.state.transcription_worker.service.config = config
     request.app.state.summary_worker.config = config
