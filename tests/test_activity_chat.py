@@ -10,6 +10,7 @@ from app.summarize.chat import (
     ACTIVITY_CHAT_SYSTEM_PROMPT,
     ActivityChatService,
     build_activity_chat_prompt,
+    plain_activity_chat_answer,
     select_activity_chat_context,
 )
 
@@ -76,6 +77,9 @@ def test_activity_chat_prompt_uses_recent_grounded_sources(tmp_path):
 
         assert "Use only the supplied Recent Activity Context as factual evidence" in ACTIVITY_CHAT_SYSTEM_PROMPT
         assert "Discuss only things that were actually said" in ACTIVITY_CHAT_SYSTEM_PROMPT
+        assert "Use plain text only" in ACTIVITY_CHAT_SYSTEM_PROMPT
+        assert "Do not use Markdown" in ACTIVITY_CHAT_SYSTEM_PROMPT
+        assert "or emoji" in ACTIVITY_CHAT_SYSTEM_PROMPT
         assert "Evidence rules: answer only from the source items below" in prompt.context_text
         assert "K0ABC asked K0XYZ about road conditions" in prompt.context_text
         assert "Old traffic outside" not in prompt.context_text
@@ -83,6 +87,24 @@ def test_activity_chat_prompt_uses_recent_grounded_sources(tmp_path):
         assert prompt.summary_ids == [summary_id]
     finally:
         db.close()
+
+
+def test_plain_activity_chat_answer_removes_markdown_and_emoji():
+    answer = plain_activity_chat_answer(
+        "# Update\n"
+        "- **K0ABC** checked in. 👍\n"
+        "1. [Details](https://example.test) were not in the transcript.\n"
+        "```text\n"
+        "coded\n"
+        "```\n"
+    )
+
+    assert answer == "Update\nK0ABC checked in.\nDetails were not in the transcript.\ncoded"
+    assert "#" not in answer
+    assert "**" not in answer
+    assert "👍" not in answer
+    assert "[" not in answer
+    assert "](" not in answer
 
 
 def test_activity_chat_noop_records_skipped_usage(tmp_path):
