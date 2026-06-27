@@ -2,6 +2,7 @@ const dashboardUrl = "/api/dashboard";
 const activityRangeStorageKey = "repeaterwatch.activityHours";
 const apiUsageRangeStorageKey = "repeaterwatch.apiUsageHours";
 const activityChatRangeStorageKey = "repeaterwatch.activityChatHours";
+const activityChatThreadStorageKey = "repeaterwatch.activityChatThread";
 const textSizeStorageKey = "repeaterwatch.textSize";
 const themeStorageKey = "repeaterwatch.theme";
 const lightThemeColor = "#24413a";
@@ -15,6 +16,7 @@ const textSizeStep = 5;
 const saveConfirmationMs = 1800;
 const saveStatusClasses = ["state-completed", "state-error"];
 const callsignPattern = /\b(?:[AKNW][A-Z]?[0-9][A-Z]{1,3}|[A-Z]{1,2}[0-9][A-Z]{1,3})\b/g;
+const maxStoredActivityChatMessages = 80;
 
 const els = {
   pullRefresh: document.querySelector("#pullRefresh"),
@@ -139,7 +141,7 @@ let currentSummaries = [];
 let currentRepeaters = [];
 let summarySearchTerm = "";
 let adHocSummary = null;
-let activityChatMessages = [];
+let activityChatMessages = loadActivityChatMessages();
 let activityChatInFlight = false;
 let dashboardRefreshInFlight = false;
 let dashboardRefreshPending = false;
@@ -205,6 +207,53 @@ function loadApiUsageHours() {
 function loadActivityChatHours() {
   const value = Number(window.localStorage.getItem(activityChatRangeStorageKey) || 24);
   return activityChatHourOptions.has(value) ? value : 24;
+}
+
+function createActivityChatMessage(role, content, options = {}) {
+  return {
+    id: options.id || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    role,
+    content: String(content || ""),
+    created_at: options.created_at || new Date().toISOString(),
+    status: options.status || "sent",
+    meta: options.meta || null,
+  };
+}
+
+function normalizeActivityChatMessage(message) {
+  if (!message || !["user", "assistant"].includes(message.role)) return null;
+  const content = String(message.content || "").trim();
+  if (!content) return null;
+  return createActivityChatMessage(message.role, content, {
+    id: message.id,
+    created_at: message.created_at,
+    status: message.status === "error" ? "error" : "sent",
+    meta: message.meta && typeof message.meta === "object" ? message.meta : null,
+  });
+}
+
+function loadActivityChatMessages() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(activityChatThreadStorageKey) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizeActivityChatMessage)
+      .filter(Boolean)
+      .slice(-maxStoredActivityChatMessages);
+  } catch {
+    return [];
+  }
+}
+
+function saveActivityChatMessages() {
+  try {
+    const storedMessages = activityChatMessages
+      .filter((message) => message.status !== "pending")
+      .slice(-maxStoredActivityChatMessages);
+    window.localStorage.setItem(activityChatThreadStorageKey, JSON.stringify(storedMessages));
+  } catch {
+    // Local storage can be unavailable in private or constrained browser modes.
+  }
 }
 
 function normalizeTextSize(value) {
@@ -379,6 +428,12 @@ function formatTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function formatChatTime(value) {
+  const date = new Date(value || Date.now());
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function formatAxisTime(value) {
@@ -1361,23 +1416,32 @@ function renderActivityChatMessages() {
   if (!els.activityChatMessages) return;
   els.activityChatMessages.innerHTML = "";
   if (!activityChatMessages.length) {
-    setEmpty(els.activityChatMessages, "No chat messages yet.");
+    const empty = document.createElement("div");
+    empty.className = "chat-empty";
+    empty.innerHTML = `<p class="muted">No messages yet.</p>`;
+    els.activityChatMessages.appendChild(empty);
     return;
   }
   const fragment = document.createDocumentFragment();
   for (const message of activityChatMessages) {
     const row = document.createElement("article");
-    row.className = `chat-message ${message.role === "user" ? "user" : "assistant"}`;
-    const meta = message.role === "assistant" && message.meta
+    row.className = `chat-message ${message.role === "user" ? "user" : "assistant"}${message.status === "pending" ? " pending" : ""}${message.status === "error" ? " error" : ""}`;
+    const meta = message.role === "assistant" && message.meta && message.status !== "pending"
       ? `<div class="meta">
           <span class="pill">${escapeHtml(message.meta.model || "model")}</span>
           <span class="pill">${formatCount(message.meta.transcripts || 0)} transcript${message.meta.transcripts === 1 ? "" : "s"}</span>
           <span class="pill">${formatCount(message.meta.summaries || 0)} summar${message.meta.summaries === 1 ? "y" : "ies"}</span>
         </div>`
       : "";
+    const text = message.status === "pending"
+      ? `<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>`
+      : callsignTextHtml(message.content);
     row.innerHTML = `
-      <p class="chat-message-role">${message.role === "user" ? "You" : "Assistant"}</p>
-      <p class="chat-message-text">${callsignTextHtml(message.content)}</p>
+      <p class="chat-message-role">
+        <span>${message.role === "user" ? "You" : "RepeaterWatch"}</span>
+        <time datetime="${escapeHtml(message.created_at || "")}">${escapeHtml(formatChatTime(message.created_at))}</time>
+      </p>
+      <p class="chat-message-text">${text}</p>
       ${meta}
     `;
     fragment.appendChild(row);
@@ -1388,7 +1452,7 @@ function renderActivityChatMessages() {
 
 function activityChatHistoryPayload() {
   return activityChatMessages
-    .filter((message) => message.role === "user" || message.role === "assistant")
+    .filter((message) => (message.role === "user" || message.role === "assistant") && message.status !== "pending" && message.status !== "error")
     .map((message) => ({ role: message.role, content: message.content }));
 }
 
@@ -2213,6 +2277,7 @@ function setupActivityChatControls() {
   if (els.clearActivityChatBtn) {
     els.clearActivityChatBtn.addEventListener("click", () => {
       activityChatMessages = [];
+      window.localStorage.removeItem(activityChatThreadStorageKey);
       if (els.activityChatStatus) els.activityChatStatus.textContent = "";
       renderActivityChatMessages();
       if (els.activityChatInput) els.activityChatInput.focus();
@@ -2220,6 +2285,15 @@ function setupActivityChatControls() {
   }
   if (!els.activityChatForm || !els.activityChatInput) return;
   renderActivityChatMessages();
+  els.activityChatInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    if (typeof els.activityChatForm.requestSubmit === "function") {
+      els.activityChatForm.requestSubmit();
+    } else {
+      els.activityChatForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    }
+  });
   els.activityChatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (activityChatInFlight) return;
@@ -2233,7 +2307,10 @@ function setupActivityChatControls() {
       hours: activityChatHours,
       repeater_id: repeaterValue ? Number(repeaterValue) : null,
     };
-    activityChatMessages.push({ role: "user", content: message });
+    const userMessage = createActivityChatMessage("user", message);
+    const pendingMessage = createActivityChatMessage("assistant", "Checking recent activity...", { status: "pending" });
+    activityChatMessages.push(userMessage, pendingMessage);
+    saveActivityChatMessages();
     els.activityChatInput.value = "";
     renderActivityChatMessages();
 
@@ -2242,25 +2319,33 @@ function setupActivityChatControls() {
     if (submitButton) submitButton.disabled = true;
     els.activityChatInput.disabled = true;
     if (els.activityChatStatus) {
-      els.activityChatStatus.textContent = "Asking activity chat...";
+      els.activityChatStatus.textContent = "Checking recent activity...";
     }
     try {
       const response = await fetchJson("/api/activity-chat", { method: "POST", body: JSON.stringify(payload) });
       const sourceCounts = response.source_counts || {};
-      activityChatMessages.push({
-        role: "assistant",
-        content: response.answer || "",
+      const replacement = createActivityChatMessage("assistant", response.answer || "No answer returned.", {
+        id: pendingMessage.id,
+        created_at: pendingMessage.created_at,
         meta: {
           model: response.model || response.backend || "model",
           transcripts: Number(sourceCounts.transcripts || 0),
           summaries: Number(sourceCounts.summaries || 0),
         },
       });
+      activityChatMessages = activityChatMessages.map((item) => item.id === pendingMessage.id ? replacement : item);
+      saveActivityChatMessages();
       if (els.activityChatStatus) {
         els.activityChatStatus.textContent = `${formatCount(sourceCounts.transcripts || 0)} transcript${sourceCounts.transcripts === 1 ? "" : "s"}, ${formatCount(sourceCounts.summaries || 0)} summar${sourceCounts.summaries === 1 ? "y" : "ies"} in context.`;
       }
     } catch (error) {
-      activityChatMessages.push({ role: "assistant", content: error.message || "Activity chat failed." });
+      const replacement = createActivityChatMessage("assistant", error.message || "Activity chat failed.", {
+        id: pendingMessage.id,
+        created_at: pendingMessage.created_at,
+        status: "error",
+      });
+      activityChatMessages = activityChatMessages.map((item) => item.id === pendingMessage.id ? replacement : item);
+      saveActivityChatMessages();
       if (els.activityChatStatus) {
         els.activityChatStatus.textContent = error.message || "Activity chat failed.";
       }
