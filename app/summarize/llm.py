@@ -33,6 +33,19 @@ SUMMARY_WINDOW_ALIASES = {
 }
 DAILY_ACTIVITY_PERIOD_GAP = timedelta(minutes=20)
 DAILY_INDEX_EXCERPT_CHARS = 220
+REMOTE_SUMMARY_RATE_LIMIT_BACKOFF_SECONDS = 15 * 60
+
+
+class RemoteSummaryRateLimited(RuntimeError):
+    def __init__(self, retry_after_seconds: float | None = None, provider_message: str = ""):
+        message = (
+            "OpenAI-compatible summary provider returned 429 Too Many Requests. "
+            "Summary generation will retry later."
+        )
+        if provider_message:
+            message = f"{message} Provider message: {provider_message}"
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass
@@ -103,6 +116,32 @@ def _as_utc(value: datetime | None) -> datetime:
 def canonical_window_name(window_name: str) -> str:
     normalized = str(window_name or "quarter_hour").strip()
     return SUMMARY_WINDOW_ALIASES.get(normalized, normalized)
+
+
+def _provider_error_text(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text.strip()
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"]).strip()
+        if payload.get("message"):
+            return str(payload["message"]).strip()
+    return ""
+
+
+def _retry_after_seconds(response: httpx.Response | None) -> float | None:
+    if response is None:
+        return None
+    retry_after = response.headers.get("retry-after")
+    if not retry_after:
+        return None
+    try:
+        return max(1.0, float(retry_after))
+    except ValueError:
+        return None
 
 
 def window_bounds(
@@ -503,7 +542,15 @@ class SummaryService:
         try:
             async with httpx.AsyncClient(timeout=120) as client:
                 response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 429:
+                        raise RemoteSummaryRateLimited(
+                            _retry_after_seconds(exc.response),
+                            _provider_error_text(exc.response),
+                        ) from exc
+                    raise
             data = response.json()
             content = data["choices"][0]["message"]["content"].strip()
             self._record_summary_usage(
@@ -516,6 +563,17 @@ class SummaryService:
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             )
             return content
+        except RemoteSummaryRateLimited as exc:
+            self._record_summary_usage(
+                selection,
+                repeater_id=repeater_id,
+                operation=operation,
+                status="error",
+                reason="remote_summary_rate_limited",
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                error=str(exc),
+            )
+            raise
         except Exception as exc:
             self._record_summary_usage(
                 selection,
@@ -550,6 +608,7 @@ class SummaryWorker:
         self.service = SummaryService(db, config)
         self.keyword_engine = keyword_engine
         self.stop_event = asyncio.Event()
+        self.remote_backoff_until = 0.0
 
     async def run(self) -> None:
         while not self.stop_event.is_set():
@@ -564,6 +623,8 @@ class SummaryWorker:
 
     async def generate_rolling(self, now: datetime | None = None) -> list[int]:
         summary_ids: list[int] = []
+        if self._remote_backoff_active():
+            return summary_ids
         repeaters = self.db.list_repeaters()
         local_tz = summary_timezone(self.config.summary.timezone)
         bounds_now = _as_utc(now) - timedelta(seconds=self.config.summary.schedule_delay_seconds)
@@ -580,7 +641,16 @@ class SummaryWorker:
                 continue
             if self._period_summary_matches(window_name, repeater_id, start, end, source_ids):
                 continue
-            summary_id = await self.service.generate_from_selection(selection, repeater_id, operation="scheduled")
+            try:
+                summary_id = await self.service.generate_from_selection(selection, repeater_id, operation="scheduled")
+            except RemoteSummaryRateLimited as exc:
+                backoff_seconds = self._start_remote_backoff(exc)
+                logger.warning(
+                    "Remote summary rate limited for %s window; retrying summaries after %.0fs",
+                    window_name,
+                    backoff_seconds,
+                )
+                break
             summary_ids.append(summary_id)
             summary = self.db.query_one("SELECT * FROM summaries WHERE id = ?", (summary_id,))
             if summary and summary["status"] == "completed" and self.keyword_engine:
@@ -596,6 +666,15 @@ class SummaryWorker:
                     repeater_name=repeater_name,
                 )
         return summary_ids
+
+    def _remote_backoff_active(self) -> bool:
+        return self.config.summary.backend == "openai-compatible" and time.monotonic() < self.remote_backoff_until
+
+    def _start_remote_backoff(self, exc: RemoteSummaryRateLimited) -> float:
+        seconds = exc.retry_after_seconds or REMOTE_SUMMARY_RATE_LIMIT_BACKOFF_SECONDS
+        seconds = max(1.0, min(float(seconds), 60 * 60))
+        self.remote_backoff_until = time.monotonic() + seconds
+        return seconds
 
     def _period_summary(self, window_name: str, repeater_id: int | None, start: datetime, end: datetime) -> dict[str, Any] | None:
         window_name = canonical_window_name(window_name)
