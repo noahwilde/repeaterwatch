@@ -128,6 +128,9 @@ class RemoteTranscriptionRateLimited(RuntimeError):
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
         self.model = model
+        self.fallback_from_model: str | None = None
+        self.fallback_reason: str | None = None
+        self.fallback_primary_attempted = False
 
 
 @dataclass
@@ -505,16 +508,22 @@ class TranscriptionService:
                 fallback_model,
                 backoff_seconds,
             )
-            return await self._remote_transcript(
-                audio_path,
-                recording,
-                model=fallback_model,
-                backend="openai-compatible-fallback",
-                force_low_confidence=self.config.transcription.remote_fallback_low_confidence,
-                fallback_from_model=exc.model or primary_model,
-                fallback_reason=str(exc),
-                fallback_primary_attempted=True,
-            )
+            try:
+                return await self._remote_transcript(
+                    audio_path,
+                    recording,
+                    model=fallback_model,
+                    backend="openai-compatible-fallback",
+                    force_low_confidence=self.config.transcription.remote_fallback_low_confidence,
+                    fallback_from_model=exc.model or primary_model,
+                    fallback_reason=str(exc),
+                    fallback_primary_attempted=True,
+                )
+            except RemoteTranscriptionRateLimited as fallback_exc:
+                fallback_exc.fallback_from_model = exc.model or primary_model
+                fallback_exc.fallback_reason = str(exc)
+                fallback_exc.fallback_primary_attempted = True
+                raise
 
     def _noop_transcript(self, audio_path: str | Path) -> TranscriptResult:
         text = (
@@ -834,6 +843,29 @@ class TranscriptionWorker:
             return transcript_id
         except RemoteTranscriptionRateLimited as exc:
             if usage_started is not None and not usage_recorded:
+                if exc.fallback_primary_attempted and exc.fallback_from_model:
+                    self.db.add_api_usage_event(
+                        {
+                            "provider": "openai-compatible",
+                            "call_type": "transcription",
+                            "operation": "recording",
+                            "model": exc.fallback_from_model,
+                            "status": "error",
+                            "source_type": "recording",
+                            "source_id": int(recording["id"]),
+                            "repeater_id": repeater_id,
+                            "input_count": 1,
+                            "audio_duration_seconds": _recording_duration_seconds(recording),
+                            "elapsed_ms": int((time.monotonic() - usage_started) * 1000),
+                            "reason": "remote_transcription_rate_limited",
+                            "error": exc.fallback_reason,
+                            "metadata": {
+                                "recording_start_time": recording.get("start_time"),
+                                "repeater_name": recording.get("repeater_name"),
+                                "fallback_model": exc.model,
+                            },
+                        }
+                    )
                 self.db.add_api_usage_event(
                     {
                         "provider": "openai-compatible",

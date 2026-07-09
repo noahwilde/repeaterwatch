@@ -56,6 +56,21 @@ class _FallbackTranscriptionService(TranscriptionService):
         )
 
 
+class _BothModelsRateLimitedTranscriptionService(TranscriptionService):
+    async def _remote_transcript(
+        self,
+        audio_path,
+        recording=None,
+        model=None,
+        backend="openai-compatible",
+        force_low_confidence=False,
+        fallback_from_model=None,
+        fallback_reason=None,
+        fallback_primary_attempted=False,
+    ):
+        raise RemoteTranscriptionRateLimited(retry_after_seconds=30, model=model or self.config.transcription.remote_model)
+
+
 class _FallbackResultTranscriptionService:
     async def transcribe(self, audio_path, recording=None):
         return TranscriptResult(
@@ -273,6 +288,42 @@ def test_transcription_worker_leaves_rate_limited_recording_pending(tmp_path):
         assert usage_events[0]["call_type"] == "transcription"
         assert usage_events[0]["status"] == "error"
         assert usage_events[0]["reason"] == "remote_transcription_rate_limited"
+    finally:
+        db.close()
+
+
+def test_transcription_worker_records_primary_and_fallback_rate_limits(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        audio_path = tmp_path / "traffic.wav"
+        audio_path.write_bytes(b"not really a wav")
+        recording_id = db.add_recording(
+            {
+                "frequency_mhz": 146.745,
+                "repeater_name": "K0RPT Main",
+                "start_time": "2026-06-22T12:00:00+00:00",
+                "duration_seconds": 5.0,
+                "audio_path": str(audio_path),
+                "status": "completed",
+            }
+        )
+        config = AppConfig()
+        config.transcription.backend = "openai-compatible"
+        config.transcription.remote_model = "gpt-4o-transcribe"
+        config.transcription.remote_fallback_model = "gpt-4o-mini-transcribe"
+        worker = TranscriptionWorker(db, config)
+        worker.service = _BothModelsRateLimitedTranscriptionService(config)
+
+        count = asyncio.run(worker.process_pending(limit=5))
+        usage_events = db.list_api_usage_events()
+
+        assert count == 0
+        assert db.get_transcript_for_recording(recording_id) is None
+        assert [event["model"] for event in usage_events] == ["gpt-4o-mini-transcribe", "gpt-4o-transcribe"]
+        assert [event["reason"] for event in usage_events] == [
+            "remote_transcription_rate_limited",
+            "remote_transcription_rate_limited",
+        ]
     finally:
         db.close()
 
