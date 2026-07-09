@@ -5,6 +5,7 @@ import asyncio
 from app.config import AppConfig
 from app.db import Database
 from app.transcribe.whisper import (
+    RemoteTranscriptionRateLimited,
     STATIC_ONLY_TEXT,
     TranscriptionService,
     TranscriptionWorker,
@@ -14,6 +15,11 @@ from app.transcribe.whisper import (
     normalize_spoken_callsigns,
     post_process_transcript,
 )
+
+
+class _RateLimitedTranscriptionService:
+    async def transcribe(self, audio_path, recording=None):
+        raise RemoteTranscriptionRateLimited(retry_after_seconds=30)
 
 
 def test_transcription_prompt_includes_repeater_context():
@@ -157,5 +163,39 @@ def test_transcription_worker_records_short_remote_skip_usage(tmp_path):
         assert usage_events[0]["status"] == "skipped"
         assert usage_events[0]["reason"] == "short_recording"
         assert usage_events[0]["audio_duration_seconds"] == 1.0
+    finally:
+        db.close()
+
+
+def test_transcription_worker_leaves_rate_limited_recording_pending(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        audio_path = tmp_path / "traffic.wav"
+        audio_path.write_bytes(b"not really a wav")
+        recording_id = db.add_recording(
+            {
+                "frequency_mhz": 146.745,
+                "repeater_name": "K0RPT Main",
+                "start_time": "2026-06-22T12:00:00+00:00",
+                "duration_seconds": 5.0,
+                "audio_path": str(audio_path),
+                "status": "completed",
+            }
+        )
+        config = AppConfig()
+        config.transcription.backend = "openai-compatible"
+        worker = TranscriptionWorker(db, config)
+        worker.service = _RateLimitedTranscriptionService()
+
+        count = asyncio.run(worker.process_pending(limit=5))
+        usage_events = db.list_api_usage_events()
+
+        assert count == 0
+        assert worker.remote_backoff_until > 0
+        assert db.get_transcript_for_recording(recording_id) is None
+        assert [row["id"] for row in db.pending_recordings_for_transcription()] == [recording_id]
+        assert usage_events[0]["call_type"] == "transcription"
+        assert usage_events[0]["status"] == "error"
+        assert usage_events[0]["reason"] == "remote_transcription_rate_limited"
     finally:
         db.close()

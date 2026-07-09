@@ -103,11 +103,21 @@ SPOKEN_DECIMAL_REPLACEMENTS = (
 REMOTE_AUDIO_FILTER = "highpass=f=250,lowpass=f=3600,afftdn=nf=-25,dynaudnorm=f=75:g=15,volume=6dB"
 STATIC_ONLY_TEXT = "[static only]"
 SHORT_RECORDING_HALLUCINATION_SECONDS = 2.0
+REMOTE_RATE_LIMIT_BACKOFF_SECONDS = 15 * 60
 PROMPT_LIKE_HALLUCINATION_RE = (
     re.compile(r"\bwelcome\s+to\s+(?:the\s+)?.{0,40}\brepeater\b", re.IGNORECASE),
     re.compile(r"\bamateur\s+radio\s+club\b", re.IGNORECASE),
     re.compile(r"\buse\s+tone\s+(?:[0-9]+(?:\.[0-9]+)?|[a-z]+(?:[-\s]+[a-z]+){0,5})\b", re.IGNORECASE),
 )
+
+
+class RemoteTranscriptionRateLimited(RuntimeError):
+    def __init__(self, retry_after_seconds: float | None = None):
+        super().__init__(
+            "OpenAI-compatible transcription provider is rate limiting requests. "
+            "Recording will remain pending and retry later."
+        )
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass
@@ -264,6 +274,18 @@ def _recording_duration_seconds(recording: dict[str, Any] | None) -> float | Non
     try:
         return float(recording.get("duration_seconds"))
     except (TypeError, ValueError):
+        return None
+
+
+def _retry_after_seconds(response: httpx.Response | None) -> float | None:
+    if response is None:
+        return None
+    retry_after = response.headers.get("retry-after")
+    if not retry_after:
+        return None
+    try:
+        return max(1.0, float(retry_after))
+    except ValueError:
         return None
 
 
@@ -456,7 +478,12 @@ class TranscriptionService:
                 files = {"file": (prepared_path.name, handle, "audio/wav")}
                 async with httpx.AsyncClient(timeout=120) as client:
                     response = await client.post(url, headers=headers, data=data, files=files)
-                    response.raise_for_status()
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code == 429:
+                            raise RemoteTranscriptionRateLimited(_retry_after_seconds(exc.response)) from exc
+                        raise
         finally:
             if temp_dir:
                 temp_dir.cleanup()
@@ -479,6 +506,7 @@ class TranscriptionWorker:
         self.service = TranscriptionService(config)
         self.keyword_engine = keyword_engine
         self.stop_event = asyncio.Event()
+        self.remote_backoff_until = 0.0
 
     async def run(self) -> None:
         while not self.stop_event.is_set():
@@ -493,10 +521,24 @@ class TranscriptionWorker:
 
     async def process_pending(self, limit: int = 10) -> int:
         count = 0
+        if self._remote_backoff_active():
+            return count
         for recording in self.db.pending_recordings_for_transcription(limit):
-            await self.process_recording(recording)
+            try:
+                await self.process_recording(recording)
+            except RemoteTranscriptionRateLimited:
+                break
             count += 1
         return count
+
+    def _remote_backoff_active(self) -> bool:
+        return self.config.transcription.backend == "openai-compatible" and time.monotonic() < self.remote_backoff_until
+
+    def _start_remote_backoff(self, exc: RemoteTranscriptionRateLimited) -> float:
+        seconds = exc.retry_after_seconds or REMOTE_RATE_LIMIT_BACKOFF_SECONDS
+        seconds = max(1.0, min(float(seconds), 60 * 60))
+        self.remote_backoff_until = time.monotonic() + seconds
+        return seconds
 
     async def process_recording(self, recording: dict[str, Any]) -> int:
         audio_path = Path(recording["audio_path"])
@@ -572,6 +614,36 @@ class TranscriptionWorker:
                     repeater_name=recording.get("repeater_name", "Repeater"),
                 )
             return transcript_id
+        except RemoteTranscriptionRateLimited as exc:
+            if usage_started is not None and not usage_recorded:
+                self.db.add_api_usage_event(
+                    {
+                        "provider": "openai-compatible",
+                        "call_type": "transcription",
+                        "operation": "recording",
+                        "model": self.config.transcription.remote_model,
+                        "status": "error",
+                        "source_type": "recording",
+                        "source_id": int(recording["id"]),
+                        "repeater_id": repeater_id,
+                        "input_count": 1,
+                        "audio_duration_seconds": _recording_duration_seconds(recording),
+                        "elapsed_ms": int((time.monotonic() - usage_started) * 1000),
+                        "reason": "remote_transcription_rate_limited",
+                        "error": str(exc),
+                        "metadata": {
+                            "recording_start_time": recording.get("start_time"),
+                            "repeater_name": recording.get("repeater_name"),
+                        },
+                    }
+                )
+            backoff_seconds = self._start_remote_backoff(exc)
+            logger.warning(
+                "Remote transcription rate limited for recording %s; leaving it pending for retry in %.0fs",
+                recording["id"],
+                backoff_seconds,
+            )
+            raise
         except Exception as exc:
             if usage_started is not None and not usage_recorded:
                 self.db.add_api_usage_event(

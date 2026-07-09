@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import httpx
+
+from app.api.activity_chat import _activity_chat_http_error
 from app.config import AppConfig
 from app.db import Database
 from app.models import ActivityChatRequest
@@ -127,3 +130,19 @@ def test_activity_chat_noop_records_skipped_usage(tmp_path):
         assert events[0]["reason"] == "disabled"
     finally:
         db.close()
+
+
+def test_activity_chat_maps_provider_rate_limit_to_readable_error():
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx.Response(
+        429,
+        json={"error": {"message": "You exceeded your current quota."}},
+        request=request,
+    )
+    exc = httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+    http_exc = _activity_chat_http_error(exc)
+
+    assert http_exc.status_code == 429
+    assert "429 Too Many Requests" in str(http_exc.detail)
+    assert "quota" in str(http_exc.detail)
