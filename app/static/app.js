@@ -2116,8 +2116,11 @@ function formatApiCallType(value) {
 function formatApiReason(value) {
   const labels = {
     remote_transcription: "Remote transcription",
+    remote_transcription_fallback: "Fallback transcription",
+    remote_transcription_rate_limited: "Transcription rate-limited",
     short_recording: "Short recording guardrail",
     remote_summary: "Remote summary",
+    remote_summary_rate_limited: "Summary rate-limited",
     remote_activity_chat: "Remote activity chat",
     ollama_activity_chat: "Ollama activity chat",
     missing_api_key: "Missing API key",
@@ -2175,6 +2178,10 @@ function renderApiUsageSettings(config) {
   if (!els.apiUsageSettingsForm || document.activeElement.closest("#apiUsageSettingsForm")) return;
   const form = els.apiUsageSettingsForm;
   const scheduledWindows = new Set((config.summary && config.summary.scheduled_windows) || []);
+  form.elements.remote_model.value = config.transcription.remote_model || "";
+  form.elements.remote_fallback_model.value = config.transcription.remote_fallback_model || "";
+  form.elements.remote_fallback_on_rate_limit.checked = Boolean(config.transcription.remote_fallback_on_rate_limit);
+  form.elements.remote_fallback_low_confidence.checked = Boolean(config.transcription.remote_fallback_low_confidence);
   form.elements.remote_min_duration_seconds.value = config.transcription.remote_min_duration_seconds;
   form.elements.summary_min_transcripts.value = config.summary.min_transcripts;
   form.elements.summary_schedule_delay_seconds.value = config.summary.schedule_delay_seconds;
@@ -2545,6 +2552,10 @@ if (els.apiUsageSettingsForm) {
         method: "PUT",
         body: JSON.stringify({
           transcription: {
+            remote_model: data.remote_model || "whisper-1",
+            remote_fallback_model: data.remote_fallback_model || "gpt-4o-mini-transcribe",
+            remote_fallback_on_rate_limit: els.apiUsageSettingsForm.elements.remote_fallback_on_rate_limit.checked,
+            remote_fallback_low_confidence: els.apiUsageSettingsForm.elements.remote_fallback_low_confidence.checked,
             remote_min_duration_seconds: Number(data.remote_min_duration_seconds),
           },
           summary: {

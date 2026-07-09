@@ -128,6 +128,9 @@ class TranscriptionConfig(BaseModel):
     remote_base_url: str = "https://api.openai.com/v1"
     remote_api_key_env: str = "OPENAI_API_KEY"
     remote_model: str = "whisper-1"
+    remote_fallback_on_rate_limit: bool = True
+    remote_fallback_model: str = "gpt-4o-mini-transcribe"
+    remote_fallback_low_confidence: bool = True
     remote_min_duration_seconds: float = Field(default=2.0, ge=0, le=60)
     poll_seconds: float = Field(default=5.0, ge=1)
 

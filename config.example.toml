@@ -50,6 +50,9 @@ compute_type = "int8"
 remote_base_url = "https://api.openai.com/v1"
 remote_api_key_env = "OPENAI_API_KEY"
 remote_model = "whisper-1"
+remote_fallback_on_rate_limit = true
+remote_fallback_model = "gpt-4o-mini-transcribe"
+remote_fallback_low_confidence = true
 remote_min_duration_seconds = 2.0
 poll_seconds = 5.0
 

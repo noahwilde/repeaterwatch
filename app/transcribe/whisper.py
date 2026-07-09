@@ -112,12 +112,22 @@ PROMPT_LIKE_HALLUCINATION_RE = (
 
 
 class RemoteTranscriptionRateLimited(RuntimeError):
-    def __init__(self, retry_after_seconds: float | None = None):
-        super().__init__(
-            "OpenAI-compatible transcription provider is rate limiting requests. "
+    def __init__(
+        self,
+        retry_after_seconds: float | None = None,
+        model: str = "",
+        provider_message: str = "",
+    ):
+        model_label = f"{model} " if model else ""
+        message = (
+            f"OpenAI-compatible {model_label}transcription provider is rate limiting requests. "
             "Recording will remain pending and retry later."
         )
+        if provider_message:
+            message = f"{message} Provider message: {provider_message}"
+        super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
+        self.model = model
 
 
 @dataclass
@@ -128,6 +138,10 @@ class TranscriptResult:
     low_confidence: bool
     backend: str
     segments: list[dict[str, Any]] = field(default_factory=list)
+    model: str | None = None
+    fallback_from_model: str | None = None
+    fallback_reason: str | None = None
+    fallback_primary_attempted: bool = False
 
 
 def detect_callsigns(text: str) -> list[str]:
@@ -201,9 +215,46 @@ def normalize_known_callsign_variants(text: str, known_callsigns: list[str] | No
     return output
 
 
+def callsign_digit_index(callsign: str) -> int:
+    for index, char in enumerate(callsign):
+        if char.isdigit():
+            return index
+    return -1
+
+
+def near_known_callsign(candidate: str, known_callsigns: list[str] | None = None) -> str | None:
+    candidate = candidate.upper()
+    if not CALLSIGN_RE.fullmatch(candidate):
+        return None
+    candidate_digit_index = callsign_digit_index(candidate)
+    matches: list[str] = []
+    for known in sorted(set(callsign.upper() for callsign in known_callsigns or [])):
+        if known == candidate or len(known) != len(candidate) or not CALLSIGN_RE.fullmatch(known):
+            continue
+        digit_index = callsign_digit_index(known)
+        if digit_index < 0 or digit_index != candidate_digit_index:
+            continue
+        if known[: digit_index + 1] != candidate[: digit_index + 1]:
+            continue
+        differences = sum(1 for left, right in zip(candidate[digit_index + 1 :], known[digit_index + 1 :]) if left != right)
+        if differences == 1:
+            matches.append(known)
+    return matches[0] if len(matches) == 1 else None
+
+
+def correct_near_known_callsigns(text: str, known_callsigns: list[str] | None = None) -> str:
+    output = text
+    for candidate in detect_callsigns(text):
+        replacement = near_known_callsign(candidate, known_callsigns)
+        if replacement:
+            output = re.sub(rf"\b{re.escape(candidate)}\b", replacement, output, flags=re.IGNORECASE)
+    return output
+
+
 def post_process_transcript(text: str, known_callsigns: list[str] | None = None) -> str:
     text = normalize_spoken_callsigns(text)
     text = normalize_known_callsign_variants(text, known_callsigns)
+    text = correct_near_known_callsigns(text, known_callsigns)
     for pattern, replacement in SPOKEN_DECIMAL_REPLACEMENTS:
         text = pattern.sub(replacement, text)
     callsigns = detect_callsigns(text)
@@ -225,6 +276,12 @@ def known_callsigns_from_context(recording: dict[str, Any] | None) -> list[str]:
     for value in values:
         if value:
             callsigns.update(detect_callsigns(str(value)))
+    configured = recording.get("known_callsigns")
+    if isinstance(configured, list):
+        for value in configured:
+            callsigns.update(detect_callsigns(str(value)))
+    elif configured:
+        callsigns.update(detect_callsigns(str(configured)))
     return sorted(callsigns)
 
 
@@ -289,6 +346,20 @@ def _retry_after_seconds(response: httpx.Response | None) -> float | None:
         return None
 
 
+def _provider_error_text(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text.strip()
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"]).strip()
+        if payload.get("message"):
+            return str(payload["message"]).strip()
+    return ""
+
+
 def prompt_like_hallucination_on_short_recording(text: str, recording: dict[str, Any] | None) -> bool:
     duration = _recording_duration_seconds(recording)
     if duration is None or duration > SHORT_RECORDING_HALLUCINATION_SECONDS:
@@ -303,6 +374,10 @@ def finalize_transcript_result(
     low_confidence: bool,
     backend: str,
     segments: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+    fallback_from_model: str | None = None,
+    fallback_reason: str | None = None,
+    fallback_primary_attempted: bool = False,
 ) -> TranscriptResult:
     processed = post_process_transcript(original, known_callsigns_from_context(recording))
     if not processed.strip() or prompt_like_hallucination_on_short_recording(processed, recording):
@@ -313,6 +388,10 @@ def finalize_transcript_result(
             low_confidence=True,
             backend=backend,
             segments=segments or [],
+            model=model,
+            fallback_from_model=fallback_from_model,
+            fallback_reason=fallback_reason,
+            fallback_primary_attempted=fallback_primary_attempted,
         )
     return TranscriptResult(
         text=processed,
@@ -321,6 +400,10 @@ def finalize_transcript_result(
         low_confidence=low_confidence or low_confidence_text(processed),
         backend=backend,
         segments=segments or [],
+        model=model,
+        fallback_from_model=fallback_from_model,
+        fallback_reason=fallback_reason,
+        fallback_primary_attempted=fallback_primary_attempted,
     )
 
 
@@ -359,6 +442,7 @@ class TranscriptionService:
     def __init__(self, config: AppConfig):
         self.config = config
         self._whisper_model: Any | None = None
+        self.primary_backoff_until = 0.0
 
     async def transcribe(self, audio_path: str | Path, recording: dict[str, Any] | None = None) -> TranscriptResult:
         backend = self.config.transcription.backend
@@ -370,8 +454,67 @@ class TranscriptionService:
             short_result = self._short_recording_static_transcript(recording)
             if short_result:
                 return short_result
-            return await self._remote_transcript(audio_path, recording)
+            return await self._remote_transcript_with_fallback(audio_path, recording)
         raise ValueError(f"Unknown transcription backend: {backend}")
+
+    def _fallback_model(self) -> str | None:
+        if not self.config.transcription.remote_fallback_on_rate_limit:
+            return None
+        primary = self.config.transcription.remote_model.strip()
+        fallback = self.config.transcription.remote_fallback_model.strip()
+        if not fallback or fallback == primary:
+            return None
+        return fallback
+
+    def _primary_backoff_active(self) -> bool:
+        return time.monotonic() < self.primary_backoff_until
+
+    def _start_primary_backoff(self, exc: RemoteTranscriptionRateLimited) -> float:
+        seconds = exc.retry_after_seconds or REMOTE_RATE_LIMIT_BACKOFF_SECONDS
+        seconds = max(1.0, min(float(seconds), 60 * 60))
+        self.primary_backoff_until = time.monotonic() + seconds
+        return seconds
+
+    async def _remote_transcript_with_fallback(
+        self,
+        audio_path: str | Path,
+        recording: dict[str, Any] | None = None,
+    ) -> TranscriptResult:
+        primary_model = self.config.transcription.remote_model.strip()
+        fallback_model = self._fallback_model()
+        if fallback_model and self._primary_backoff_active():
+            return await self._remote_transcript(
+                audio_path,
+                recording,
+                model=fallback_model,
+                backend="openai-compatible-fallback",
+                force_low_confidence=self.config.transcription.remote_fallback_low_confidence,
+                fallback_from_model=primary_model,
+                fallback_reason="Primary transcription model is in rate-limit backoff.",
+                fallback_primary_attempted=False,
+            )
+        try:
+            return await self._remote_transcript(audio_path, recording, model=primary_model)
+        except RemoteTranscriptionRateLimited as exc:
+            if not fallback_model:
+                raise
+            backoff_seconds = self._start_primary_backoff(exc)
+            logger.warning(
+                "Primary transcription model %s rate limited; using fallback %s for %.0fs",
+                exc.model or primary_model,
+                fallback_model,
+                backoff_seconds,
+            )
+            return await self._remote_transcript(
+                audio_path,
+                recording,
+                model=fallback_model,
+                backend="openai-compatible-fallback",
+                force_low_confidence=self.config.transcription.remote_fallback_low_confidence,
+                fallback_from_model=exc.model or primary_model,
+                fallback_reason=str(exc),
+                fallback_primary_attempted=True,
+            )
 
     def _noop_transcript(self, audio_path: str | Path) -> TranscriptResult:
         text = (
@@ -458,15 +601,26 @@ class TranscriptionService:
             segments=segments,
         )
 
-    async def _remote_transcript(self, audio_path: str | Path, recording: dict[str, Any] | None = None) -> TranscriptResult:
+    async def _remote_transcript(
+        self,
+        audio_path: str | Path,
+        recording: dict[str, Any] | None = None,
+        model: str | None = None,
+        backend: str = "openai-compatible",
+        force_low_confidence: bool = False,
+        fallback_from_model: str | None = None,
+        fallback_reason: str | None = None,
+        fallback_primary_attempted: bool = False,
+    ) -> TranscriptResult:
         api_key = os.getenv(self.config.transcription.remote_api_key_env, "")
         if not api_key:
             raise RuntimeError(f"{self.config.transcription.remote_api_key_env} is not set")
         base_url = self.config.transcription.remote_base_url.rstrip("/")
         url = f"{base_url}/audio/transcriptions"
+        model_name = model or self.config.transcription.remote_model
         headers = {"Authorization": f"Bearer {api_key}"}
         data = {
-            "model": self.config.transcription.remote_model,
+            "model": model_name,
             "prompt": build_transcription_prompt(recording),
             "response_format": "json",
         }
@@ -482,7 +636,11 @@ class TranscriptionService:
                         response.raise_for_status()
                     except httpx.HTTPStatusError as exc:
                         if exc.response.status_code == 429:
-                            raise RemoteTranscriptionRateLimited(_retry_after_seconds(exc.response)) from exc
+                            raise RemoteTranscriptionRateLimited(
+                                _retry_after_seconds(exc.response),
+                                model_name,
+                                _provider_error_text(exc.response),
+                            ) from exc
                         raise
         finally:
             if temp_dir:
@@ -493,9 +651,13 @@ class TranscriptionService:
             original=original,
             recording=recording,
             confidence=None,
-            low_confidence=low_confidence_text(original),
-            backend="openai-compatible",
+            low_confidence=force_low_confidence or low_confidence_text(original),
+            backend=backend,
             segments=[],
+            model=model_name,
+            fallback_from_model=fallback_from_model,
+            fallback_reason=fallback_reason,
+            fallback_primary_attempted=fallback_primary_attempted,
         )
 
 
@@ -540,6 +702,29 @@ class TranscriptionWorker:
         self.remote_backoff_until = time.monotonic() + seconds
         return seconds
 
+    def _recent_observed_callsigns(self, repeater_id: Any | None, limit: int = 100) -> list[str]:
+        params: list[Any] = []
+        repeater_filter = ""
+        if repeater_id is not None:
+            repeater_filter = "AND r.repeater_id = ?"
+            params.append(int(repeater_id))
+        params.append(limit)
+        rows = self.db.query_all(
+            f"""
+            SELECT t.text
+            FROM transcripts t
+            JOIN recordings r ON r.id = t.recording_id
+            WHERE t.status = 'completed' {repeater_filter}
+            ORDER BY r.start_time DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        callsigns: set[str] = set()
+        for row in rows:
+            callsigns.update(detect_callsigns(str(row.get("text", ""))))
+        return sorted(callsigns)[:60]
+
     async def process_recording(self, recording: dict[str, Any]) -> int:
         audio_path = Path(recording["audio_path"])
         repeater_id = recording.get("repeater_id")
@@ -563,17 +748,48 @@ class TranscriptionWorker:
                             "repeater_notes": repeater.get("notes"),
                         }
                     )
+            observed_callsigns = self._recent_observed_callsigns(repeater_id)
+            if observed_callsigns:
+                context_callsigns = set(known_callsigns_from_context(recording_context))
+                context_callsigns.update(observed_callsigns)
+                recording_context["known_callsigns"] = sorted(context_callsigns)
             if self.config.transcription.backend == "openai-compatible":
                 usage_started = time.monotonic()
             result = await self.service.transcribe(audio_path, recording_context)
             if usage_started is not None:
                 status = "skipped" if result.backend == "openai-compatible-skipped" else "success"
+                reason = "short_recording" if status == "skipped" else "remote_transcription"
+                if result.backend == "openai-compatible-fallback":
+                    reason = "remote_transcription_fallback"
+                if result.fallback_primary_attempted and result.fallback_from_model:
+                    self.db.add_api_usage_event(
+                        {
+                            "provider": "openai-compatible",
+                            "call_type": "transcription",
+                            "operation": "recording",
+                            "model": result.fallback_from_model,
+                            "status": "error",
+                            "source_type": "recording",
+                            "source_id": int(recording["id"]),
+                            "repeater_id": repeater_id,
+                            "input_count": 1,
+                            "audio_duration_seconds": _recording_duration_seconds(recording_context),
+                            "elapsed_ms": int((time.monotonic() - usage_started) * 1000),
+                            "reason": "remote_transcription_rate_limited",
+                            "error": result.fallback_reason,
+                            "metadata": {
+                                "recording_start_time": recording.get("start_time"),
+                                "repeater_name": recording.get("repeater_name"),
+                                "fallback_model": result.model,
+                            },
+                        }
+                    )
                 self.db.add_api_usage_event(
                     {
                         "provider": "openai-compatible",
                         "call_type": "transcription",
                         "operation": "recording",
-                        "model": self.config.transcription.remote_model,
+                        "model": result.model or self.config.transcription.remote_model,
                         "status": status,
                         "source_type": "recording",
                         "source_id": int(recording["id"]),
@@ -581,10 +797,12 @@ class TranscriptionWorker:
                         "input_count": 1,
                         "audio_duration_seconds": _recording_duration_seconds(recording_context),
                         "elapsed_ms": int((time.monotonic() - usage_started) * 1000),
-                        "reason": "short_recording" if status == "skipped" else "remote_transcription",
+                        "reason": reason,
                         "metadata": {
                             "recording_start_time": recording.get("start_time"),
                             "repeater_name": recording.get("repeater_name"),
+                            "fallback_from_model": result.fallback_from_model,
+                            "fallback_reason": result.fallback_reason,
                         },
                     }
                 )
@@ -621,7 +839,7 @@ class TranscriptionWorker:
                         "provider": "openai-compatible",
                         "call_type": "transcription",
                         "operation": "recording",
-                        "model": self.config.transcription.remote_model,
+                        "model": exc.model or self.config.transcription.remote_model,
                         "status": "error",
                         "source_type": "recording",
                         "source_id": int(recording["id"]),
