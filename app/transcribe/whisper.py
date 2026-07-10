@@ -16,6 +16,11 @@ import httpx
 
 from app.config import AppConfig
 from app.db import Database
+from app.provider_errors import (
+    provider_error_details,
+    provider_error_is_insufficient_quota,
+    provider_retry_after_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +109,7 @@ REMOTE_AUDIO_FILTER = "highpass=f=250,lowpass=f=3600,afftdn=nf=-25,dynaudnorm=f=
 STATIC_ONLY_TEXT = "[static only]"
 SHORT_RECORDING_HALLUCINATION_SECONDS = 2.0
 REMOTE_RATE_LIMIT_BACKOFF_SECONDS = 15 * 60
+REMOTE_QUOTA_BACKOFF_SECONDS = 6 * 60 * 60
 PROMPT_LIKE_HALLUCINATION_RE = (
     re.compile(r"\bwelcome\s+to\s+(?:the\s+)?.{0,40}\brepeater\b", re.IGNORECASE),
     re.compile(r"\bamateur\s+radio\s+club\b", re.IGNORECASE),
@@ -117,17 +123,25 @@ class RemoteTranscriptionRateLimited(RuntimeError):
         retry_after_seconds: float | None = None,
         model: str = "",
         provider_message: str = "",
+        quota_exceeded: bool = False,
     ):
         model_label = f"{model} " if model else ""
-        message = (
-            f"OpenAI-compatible {model_label}transcription provider is rate limiting requests. "
-            "Recording will remain pending and retry later."
-        )
+        if quota_exceeded:
+            message = (
+                f"OpenAI-compatible {model_label}transcription provider reported insufficient quota. "
+                "Recording will remain pending and retry later."
+            )
+        else:
+            message = (
+                f"OpenAI-compatible {model_label}transcription provider is rate limiting requests. "
+                "Recording will remain pending and retry later."
+            )
         if provider_message:
             message = f"{message} Provider message: {provider_message}"
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
         self.model = model
+        self.quota_exceeded = quota_exceeded
         self.fallback_from_model: str | None = None
         self.fallback_reason: str | None = None
         self.fallback_primary_attempted = False
@@ -337,32 +351,6 @@ def _recording_duration_seconds(recording: dict[str, Any] | None) -> float | Non
         return None
 
 
-def _retry_after_seconds(response: httpx.Response | None) -> float | None:
-    if response is None:
-        return None
-    retry_after = response.headers.get("retry-after")
-    if not retry_after:
-        return None
-    try:
-        return max(1.0, float(retry_after))
-    except ValueError:
-        return None
-
-
-def _provider_error_text(response: httpx.Response) -> str:
-    try:
-        payload = response.json()
-    except ValueError:
-        return response.text.strip()
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict) and error.get("message"):
-            return str(error["message"]).strip()
-        if payload.get("message"):
-            return str(payload["message"]).strip()
-    return ""
-
-
 def prompt_like_hallucination_on_short_recording(text: str, recording: dict[str, Any] | None) -> bool:
     duration = _recording_duration_seconds(recording)
     if duration is None or duration > SHORT_RECORDING_HALLUCINATION_SECONDS:
@@ -499,6 +487,8 @@ class TranscriptionService:
         try:
             return await self._remote_transcript(audio_path, recording, model=primary_model)
         except RemoteTranscriptionRateLimited as exc:
+            if exc.quota_exceeded:
+                raise
             if not fallback_model:
                 raise
             backoff_seconds = self._start_primary_backoff(exc)
@@ -645,10 +635,12 @@ class TranscriptionService:
                         response.raise_for_status()
                     except httpx.HTTPStatusError as exc:
                         if exc.response.status_code == 429:
+                            details = provider_error_details(exc.response)
                             raise RemoteTranscriptionRateLimited(
-                                _retry_after_seconds(exc.response),
+                                provider_retry_after_seconds(exc.response),
                                 model_name,
-                                _provider_error_text(exc.response),
+                                details.message,
+                                quota_exceeded=provider_error_is_insufficient_quota(details),
                             ) from exc
                         raise
         finally:
@@ -706,8 +698,10 @@ class TranscriptionWorker:
         return self.config.transcription.backend == "openai-compatible" and time.monotonic() < self.remote_backoff_until
 
     def _start_remote_backoff(self, exc: RemoteTranscriptionRateLimited) -> float:
-        seconds = exc.retry_after_seconds or REMOTE_RATE_LIMIT_BACKOFF_SECONDS
-        seconds = max(1.0, min(float(seconds), 60 * 60))
+        default_seconds = REMOTE_QUOTA_BACKOFF_SECONDS if exc.quota_exceeded else REMOTE_RATE_LIMIT_BACKOFF_SECONDS
+        max_seconds = REMOTE_QUOTA_BACKOFF_SECONDS if exc.quota_exceeded else 60 * 60
+        seconds = exc.retry_after_seconds or default_seconds
+        seconds = max(1.0, min(float(seconds), max_seconds))
         self.remote_backoff_until = time.monotonic() + seconds
         return seconds
 
@@ -842,6 +836,11 @@ class TranscriptionWorker:
                 )
             return transcript_id
         except RemoteTranscriptionRateLimited as exc:
+            failure_reason = (
+                "remote_transcription_quota_exceeded"
+                if exc.quota_exceeded
+                else "remote_transcription_rate_limited"
+            )
             if usage_started is not None and not usage_recorded:
                 if exc.fallback_primary_attempted and exc.fallback_from_model:
                     self.db.add_api_usage_event(
@@ -879,7 +878,7 @@ class TranscriptionWorker:
                         "input_count": 1,
                         "audio_duration_seconds": _recording_duration_seconds(recording),
                         "elapsed_ms": int((time.monotonic() - usage_started) * 1000),
-                        "reason": "remote_transcription_rate_limited",
+                        "reason": failure_reason,
                         "error": str(exc),
                         "metadata": {
                             "recording_start_time": recording.get("start_time"),
@@ -888,11 +887,18 @@ class TranscriptionWorker:
                     }
                 )
             backoff_seconds = self._start_remote_backoff(exc)
-            logger.warning(
-                "Remote transcription rate limited for recording %s; leaving it pending for retry in %.0fs",
-                recording["id"],
-                backoff_seconds,
-            )
+            if exc.quota_exceeded:
+                logger.warning(
+                    "Remote transcription quota exhausted for recording %s; leaving it pending for retry in %.0fs",
+                    recording["id"],
+                    backoff_seconds,
+                )
+            else:
+                logger.warning(
+                    "Remote transcription rate limited for recording %s; leaving it pending for retry in %.0fs",
+                    recording["id"],
+                    backoff_seconds,
+                )
             raise
         except Exception as exc:
             if usage_started is not None and not usage_recorded:

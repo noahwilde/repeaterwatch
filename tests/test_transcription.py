@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
+
+import pytest
 
 from app.config import AppConfig
 from app.db import Database
 from app.transcribe.whisper import (
+    REMOTE_QUOTA_BACKOFF_SECONDS,
     RemoteTranscriptionRateLimited,
     STATIC_ONLY_TEXT,
     TranscriptResult,
@@ -21,6 +25,15 @@ from app.transcribe.whisper import (
 class _RateLimitedTranscriptionService:
     async def transcribe(self, audio_path, recording=None):
         raise RemoteTranscriptionRateLimited(retry_after_seconds=30)
+
+
+class _QuotaExceededTranscriptionService:
+    async def transcribe(self, audio_path, recording=None):
+        raise RemoteTranscriptionRateLimited(
+            model="gpt-4o-transcribe",
+            provider_message="You exceeded your current quota.",
+            quota_exceeded=True,
+        )
 
 
 class _FallbackTranscriptionService(TranscriptionService):
@@ -69,6 +82,27 @@ class _BothModelsRateLimitedTranscriptionService(TranscriptionService):
         fallback_primary_attempted=False,
     ):
         raise RemoteTranscriptionRateLimited(retry_after_seconds=30, model=model or self.config.transcription.remote_model)
+
+
+class _QuotaExceededPrimaryTranscriptionService(TranscriptionService):
+    def __init__(self, config: AppConfig):
+        super().__init__(config)
+        self.calls: list[str] = []
+
+    async def _remote_transcript(
+        self,
+        audio_path,
+        recording=None,
+        model=None,
+        backend="openai-compatible",
+        force_low_confidence=False,
+        fallback_from_model=None,
+        fallback_reason=None,
+        fallback_primary_attempted=False,
+    ):
+        model_name = model or self.config.transcription.remote_model
+        self.calls.append(model_name)
+        raise RemoteTranscriptionRateLimited(model=model_name, quota_exceeded=True)
 
 
 class _FallbackResultTranscriptionService:
@@ -226,6 +260,20 @@ def test_remote_transcription_uses_low_confidence_fallback_after_primary_rate_li
     assert service.calls == ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-mini-transcribe"]
 
 
+def test_remote_transcription_does_not_fallback_after_quota_exceeded():
+    config = AppConfig()
+    config.transcription.backend = "openai-compatible"
+    config.transcription.remote_model = "gpt-4o-transcribe"
+    config.transcription.remote_fallback_model = "gpt-4o-mini-transcribe"
+    service = _QuotaExceededPrimaryTranscriptionService(config)
+
+    with pytest.raises(RemoteTranscriptionRateLimited) as exc_info:
+        asyncio.run(service.transcribe("missing.wav", {"duration_seconds": 5.0}))
+
+    assert exc_info.value.quota_exceeded is True
+    assert service.calls == ["gpt-4o-transcribe"]
+
+
 def test_transcription_worker_records_short_remote_skip_usage(tmp_path):
     db = Database(tmp_path / "rw.sqlite3")
     try:
@@ -288,6 +336,42 @@ def test_transcription_worker_leaves_rate_limited_recording_pending(tmp_path):
         assert usage_events[0]["call_type"] == "transcription"
         assert usage_events[0]["status"] == "error"
         assert usage_events[0]["reason"] == "remote_transcription_rate_limited"
+    finally:
+        db.close()
+
+
+def test_transcription_worker_records_quota_exceeded_and_long_backoff(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        audio_path = tmp_path / "traffic.wav"
+        audio_path.write_bytes(b"not really a wav")
+        recording_id = db.add_recording(
+            {
+                "frequency_mhz": 146.745,
+                "repeater_name": "K0RPT Main",
+                "start_time": "2026-06-22T12:00:00+00:00",
+                "duration_seconds": 5.0,
+                "audio_path": str(audio_path),
+                "status": "completed",
+            }
+        )
+        config = AppConfig()
+        config.transcription.backend = "openai-compatible"
+        worker = TranscriptionWorker(db, config)
+        worker.service = _QuotaExceededTranscriptionService()
+
+        started = time.monotonic()
+        count = asyncio.run(worker.process_pending(limit=5))
+        usage_events = db.list_api_usage_events()
+
+        assert count == 0
+        assert worker.remote_backoff_until > 0
+        assert worker.remote_backoff_until >= started + REMOTE_QUOTA_BACKOFF_SECONDS - 1.0
+        assert db.get_transcript_for_recording(recording_id) is None
+        assert [row["id"] for row in db.pending_recordings_for_transcription()] == [recording_id]
+        assert usage_events[0]["call_type"] == "transcription"
+        assert usage_events[0]["status"] == "error"
+        assert usage_events[0]["reason"] == "remote_transcription_quota_exceeded"
     finally:
         db.close()
 

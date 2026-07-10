@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta, timezone
 
 from app.config import AppConfig
 from app.db import Database
 from app.summarize.llm import (
+    REMOTE_SUMMARY_QUOTA_BACKOFF_SECONDS,
     RemoteSummaryRateLimited,
     SummaryService,
     SummaryWorker,
@@ -25,6 +27,18 @@ class _RateLimitedSummaryService:
     async def generate_from_selection(self, selection, repeater_id=None, operation="manual"):
         self.calls += 1
         raise RemoteSummaryRateLimited(retry_after_seconds=30)
+
+
+class _QuotaExceededSummaryService:
+    def __init__(self):
+        self.calls = 0
+
+    async def generate_from_selection(self, selection, repeater_id=None, operation="manual"):
+        self.calls += 1
+        raise RemoteSummaryRateLimited(
+            provider_message="You exceeded your current quota.",
+            quota_exceeded=True,
+        )
 
 
 def _recording_with_transcript(db: Database, repeater_id: int, start_time: datetime, text: str) -> int:
@@ -245,6 +259,38 @@ def test_summary_worker_backs_off_after_remote_rate_limit(tmp_path):
         assert second == []
         assert rate_limited_service.calls == 1
         assert worker.remote_backoff_until > 0
+        assert db.list_summaries(20) == []
+    finally:
+        db.close()
+
+
+def test_summary_worker_uses_long_backoff_after_remote_quota_exceeded(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        _recording_with_transcript(
+            db,
+            repeater_id,
+            datetime(2026, 6, 21, 20, 30, tzinfo=UTC),
+            "K0XYZ handled an hourly net check-in.",
+        )
+        config = AppConfig()
+        config.summary.backend = "openai-compatible"
+        config.summary.timezone = "UTC"
+        config.summary.scheduled_windows = ["hour"]
+        worker = SummaryWorker(db, config)
+        quota_service = _QuotaExceededSummaryService()
+        worker.service = quota_service
+
+        started = time.monotonic()
+        first = asyncio.run(worker.generate_rolling(now=now))
+        second = asyncio.run(worker.generate_rolling(now=now))
+
+        assert first == []
+        assert second == []
+        assert quota_service.calls == 1
+        assert worker.remote_backoff_until >= started + REMOTE_SUMMARY_QUOTA_BACKOFF_SECONDS - 1.0
         assert db.list_summaries(20) == []
     finally:
         db.close()

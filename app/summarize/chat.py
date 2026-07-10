@@ -13,6 +13,7 @@ import httpx
 from app.config import AppConfig
 from app.db import Database
 from app.models import ActivityChatMessage, ActivityChatRequest
+from app.provider_errors import provider_error_details, provider_error_is_insufficient_quota
 from app.summarize.llm import summary_timezone
 
 
@@ -389,12 +390,20 @@ class ActivityChatService:
             )
             return answer
         except Exception as exc:
+            reason = "remote_activity_chat"
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+                details = provider_error_details(exc.response)
+                reason = (
+                    "remote_activity_chat_quota_exceeded"
+                    if provider_error_is_insufficient_quota(details)
+                    else "remote_activity_chat_rate_limited"
+                )
             self._record_chat_usage(
                 payload,
                 context,
                 prompt,
                 "error",
-                "remote_activity_chat",
+                reason,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 error=str(exc),
             )

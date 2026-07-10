@@ -16,6 +16,11 @@ import httpx
 from app.config import AppConfig
 from app.db import Database
 from app.notify.webpush import non_automated_transcript_text
+from app.provider_errors import (
+    provider_error_details,
+    provider_error_is_insufficient_quota,
+    provider_retry_after_seconds,
+)
 from app.transcribe.whisper import detect_callsigns
 
 logger = logging.getLogger(__name__)
@@ -34,18 +39,31 @@ SUMMARY_WINDOW_ALIASES = {
 DAILY_ACTIVITY_PERIOD_GAP = timedelta(minutes=20)
 DAILY_INDEX_EXCERPT_CHARS = 220
 REMOTE_SUMMARY_RATE_LIMIT_BACKOFF_SECONDS = 15 * 60
+REMOTE_SUMMARY_QUOTA_BACKOFF_SECONDS = 6 * 60 * 60
 
 
 class RemoteSummaryRateLimited(RuntimeError):
-    def __init__(self, retry_after_seconds: float | None = None, provider_message: str = ""):
-        message = (
-            "OpenAI-compatible summary provider returned 429 Too Many Requests. "
-            "Summary generation will retry later."
-        )
+    def __init__(
+        self,
+        retry_after_seconds: float | None = None,
+        provider_message: str = "",
+        quota_exceeded: bool = False,
+    ):
+        if quota_exceeded:
+            message = (
+                "OpenAI-compatible summary provider reported insufficient quota. "
+                "Summary generation will retry later."
+            )
+        else:
+            message = (
+                "OpenAI-compatible summary provider returned 429 Too Many Requests. "
+                "Summary generation will retry later."
+            )
         if provider_message:
             message = f"{message} Provider message: {provider_message}"
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
+        self.quota_exceeded = quota_exceeded
 
 
 @dataclass
@@ -116,32 +134,6 @@ def _as_utc(value: datetime | None) -> datetime:
 def canonical_window_name(window_name: str) -> str:
     normalized = str(window_name or "quarter_hour").strip()
     return SUMMARY_WINDOW_ALIASES.get(normalized, normalized)
-
-
-def _provider_error_text(response: httpx.Response) -> str:
-    try:
-        payload = response.json()
-    except ValueError:
-        return response.text.strip()
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict) and error.get("message"):
-            return str(error["message"]).strip()
-        if payload.get("message"):
-            return str(payload["message"]).strip()
-    return ""
-
-
-def _retry_after_seconds(response: httpx.Response | None) -> float | None:
-    if response is None:
-        return None
-    retry_after = response.headers.get("retry-after")
-    if not retry_after:
-        return None
-    try:
-        return max(1.0, float(retry_after))
-    except ValueError:
-        return None
 
 
 def window_bounds(
@@ -546,9 +538,11 @@ class SummaryService:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code == 429:
+                        details = provider_error_details(exc.response)
                         raise RemoteSummaryRateLimited(
-                            _retry_after_seconds(exc.response),
-                            _provider_error_text(exc.response),
+                            provider_retry_after_seconds(exc.response),
+                            details.message,
+                            quota_exceeded=provider_error_is_insufficient_quota(details),
                         ) from exc
                     raise
             data = response.json()
@@ -569,7 +563,7 @@ class SummaryService:
                 repeater_id=repeater_id,
                 operation=operation,
                 status="error",
-                reason="remote_summary_rate_limited",
+                reason="remote_summary_quota_exceeded" if exc.quota_exceeded else "remote_summary_rate_limited",
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 error=str(exc),
             )
@@ -645,11 +639,18 @@ class SummaryWorker:
                 summary_id = await self.service.generate_from_selection(selection, repeater_id, operation="scheduled")
             except RemoteSummaryRateLimited as exc:
                 backoff_seconds = self._start_remote_backoff(exc)
-                logger.warning(
-                    "Remote summary rate limited for %s window; retrying summaries after %.0fs",
-                    window_name,
-                    backoff_seconds,
-                )
+                if exc.quota_exceeded:
+                    logger.warning(
+                        "Remote summary quota exhausted for %s window; retrying summaries after %.0fs",
+                        window_name,
+                        backoff_seconds,
+                    )
+                else:
+                    logger.warning(
+                        "Remote summary rate limited for %s window; retrying summaries after %.0fs",
+                        window_name,
+                        backoff_seconds,
+                    )
                 break
             summary_ids.append(summary_id)
             summary = self.db.query_one("SELECT * FROM summaries WHERE id = ?", (summary_id,))
@@ -671,8 +672,14 @@ class SummaryWorker:
         return self.config.summary.backend == "openai-compatible" and time.monotonic() < self.remote_backoff_until
 
     def _start_remote_backoff(self, exc: RemoteSummaryRateLimited) -> float:
-        seconds = exc.retry_after_seconds or REMOTE_SUMMARY_RATE_LIMIT_BACKOFF_SECONDS
-        seconds = max(1.0, min(float(seconds), 60 * 60))
+        default_seconds = (
+            REMOTE_SUMMARY_QUOTA_BACKOFF_SECONDS
+            if exc.quota_exceeded
+            else REMOTE_SUMMARY_RATE_LIMIT_BACKOFF_SECONDS
+        )
+        max_seconds = REMOTE_SUMMARY_QUOTA_BACKOFF_SECONDS if exc.quota_exceeded else 60 * 60
+        seconds = exc.retry_after_seconds or default_seconds
+        seconds = max(1.0, min(float(seconds), max_seconds))
         self.remote_backoff_until = time.monotonic() + seconds
         return seconds
 

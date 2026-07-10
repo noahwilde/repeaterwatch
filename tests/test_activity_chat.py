@@ -146,3 +146,25 @@ def test_activity_chat_maps_provider_rate_limit_to_readable_error():
     assert http_exc.status_code == 429
     assert "429 Too Many Requests" in str(http_exc.detail)
     assert "quota" in str(http_exc.detail)
+
+
+def test_activity_chat_maps_insufficient_quota_to_readable_error():
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx.Response(
+        429,
+        json={
+            "error": {
+                "message": "You exceeded your current quota.",
+                "type": "insufficient_quota",
+                "code": "insufficient_quota",
+            }
+        },
+        request=request,
+    )
+    exc = httpx.HTTPStatusError("quota exceeded", request=request, response=response)
+
+    http_exc = _activity_chat_http_error(exc)
+
+    assert http_exc.status_code == 429
+    assert "insufficient quota" in str(http_exc.detail)
+    assert "project budget" in str(http_exc.detail)
