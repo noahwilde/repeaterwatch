@@ -36,6 +36,7 @@ SUMMARY_WINDOW_ALIASES = {
     "last_hour": "hour",
     "today": "day",
 }
+REMOTE_SUMMARY_BACKENDS = {"openai-compatible", "lm-studio"}
 DAILY_ACTIVITY_PERIOD_GAP = timedelta(minutes=20)
 DAILY_INDEX_EXCERPT_CHARS = 220
 REMOTE_SUMMARY_RATE_LIMIT_BACKOFF_SECONDS = 15 * 60
@@ -134,6 +135,13 @@ def _as_utc(value: datetime | None) -> datetime:
 def canonical_window_name(window_name: str) -> str:
     normalized = str(window_name or "quarter_hour").strip()
     return SUMMARY_WINDOW_ALIASES.get(normalized, normalized)
+
+
+def lm_studio_base_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1"):
+        return normalized[:-3].rstrip("/")
+    return normalized
 
 
 def window_bounds(
@@ -247,7 +255,7 @@ def daily_activity_index(selection: SummarySelection) -> str:
 
     lines = [
         "Daily Activity Index:",
-        "Use this index as a coverage checklist before writing the summary. Every possible user-traffic period should be represented in the final summary.",
+        "Use this index only as a private coverage checklist before writing the summary. Do not copy it, restate it line by line, or write the final answer as a timestamp log.",
     ]
     previous_time: datetime | None = None
     period = 0
@@ -305,7 +313,10 @@ def build_summary_prompt(selection: SummarySelection) -> str:
             "busiest stretch. First identify every distinct activity period, net, check-in sequence, announcement, "
             "and user-traffic cluster. If multiple nets or check-in sessions occur back to back, mention each one "
             "separately when the transcripts name different nets, net-control stations, topics, or purposes. Keep "
-            "details for dense periods brief enough that quieter periods are still covered. "
+            "details for dense periods brief enough that quieter periods are still covered. The final answer must be "
+            "a synthesized narrative, not a log, timeline, or list of timestamps. Mention exact times only for "
+            "important scheduled nets, announcements, or unusual activity. Group repeated automated repeater IDs and "
+            "welcome messages into a single automated-message note instead of listing each occurrence. "
         )
     coverage_section = f"{coverage_index}\n\n" if coverage_index else ""
     if canonical_window_name(selection.window_name) == "day":
@@ -371,7 +382,7 @@ class SummaryService:
         if len(selection.transcripts) < self.config.summary.min_transcripts:
             text = "Not enough traffic to summarize for this window."
             status = "not_enough_traffic"
-            if self.config.summary.backend == "openai-compatible":
+            if self.config.summary.backend in REMOTE_SUMMARY_BACKENDS:
                 self._record_summary_usage(
                     selection,
                     repeater_id=repeater_id,
@@ -386,7 +397,7 @@ class SummaryService:
         ):
             text = "Only automated/system repeater messages were heard in this window."
             status = "automated_only"
-            if self.config.summary.backend == "openai-compatible":
+            if self.config.summary.backend in REMOTE_SUMMARY_BACKENDS:
                 self._record_summary_usage(
                     selection,
                     repeater_id=repeater_id,
@@ -399,6 +410,9 @@ class SummaryService:
             status = "completed"
         elif self.config.summary.backend == "openai-compatible":
             text = await self._openai_compatible_summary(selection, repeater_id, operation)
+            status = "completed"
+        elif self.config.summary.backend == "lm-studio":
+            text = await self._lm_studio_summary(selection, repeater_id, operation)
             status = "completed"
         elif self.config.summary.backend == "ollama":
             text = await self._ollama_summary(selection)
@@ -506,7 +520,7 @@ class SummaryService:
         usage = usage or {}
         self.db.add_api_usage_event(
             {
-                "provider": "openai-compatible",
+                "provider": self.config.summary.backend,
                 "call_type": "summary",
                 "operation": operation,
                 "model": self.config.summary.model,
@@ -597,6 +611,68 @@ class SummaryService:
                 operation=operation,
                 status="error",
                 reason="remote_summary",
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                error=str(exc),
+            )
+            raise
+
+    async def _lm_studio_summary(
+        self,
+        selection: SummarySelection,
+        repeater_id: int | None,
+        operation: str,
+    ) -> str:
+        config = self.config.summary
+        url = f"{lm_studio_base_url(config.base_url)}/api/v1/chat"
+        payload = {
+            "model": config.model,
+            "system_prompt": "You summarize radio traffic conservatively.",
+            "input": self._build_model_prompt(selection),
+            "temperature": 0.1,
+            "reasoning": config.reasoning,
+            "store": False,
+        }
+        started = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=600) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+            data = response.json()
+            messages = [
+                str(item.get("content", "")).strip()
+                for item in data.get("output", [])
+                if item.get("type") == "message" and str(item.get("content", "")).strip()
+            ]
+            content = "\n".join(messages).strip()
+            if not content:
+                raise RuntimeError("LM Studio summary returned no message content")
+            stats = data.get("stats") or {}
+            prompt_tokens = stats.get("input_tokens")
+            completion_tokens = stats.get("total_output_tokens")
+            total_tokens = None
+            if prompt_tokens is not None and completion_tokens is not None:
+                total_tokens = int(prompt_tokens) + int(completion_tokens)
+            self._record_summary_usage(
+                selection,
+                repeater_id=repeater_id,
+                operation=operation,
+                status="success",
+                reason="lm_studio_summary",
+                usage={
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+            return content
+        except Exception as exc:
+            self._record_summary_usage(
+                selection,
+                repeater_id=repeater_id,
+                operation=operation,
+                status="error",
+                reason="lm_studio_summary",
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 error=str(exc),
             )

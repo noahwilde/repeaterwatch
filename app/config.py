@@ -139,12 +139,13 @@ SummaryScheduledWindow = Literal["quarter_hour", "hour", "day"]
 
 
 class SummaryConfig(BaseModel):
-    backend: Literal["noop", "openai-compatible", "ollama"] = "noop"
+    backend: Literal["noop", "openai-compatible", "lm-studio", "ollama"] = "noop"
     model: str = "llama3.1"
     base_url: str = "http://localhost:11434"
     api_key_env: str = "OPENAI_API_KEY"
+    reasoning: Literal["off", "low", "medium", "high", "on"] = "off"
     timezone: str = "local"
-    prompt_version: str = "repeaterwatch-v6-scheduled-timeline"
+    prompt_version: str = "repeaterwatch-v7-scheduled-narrative"
     min_transcripts: int = Field(default=1, ge=1)
     scheduled_windows: list[SummaryScheduledWindow] = Field(
         default_factory=lambda: ["hour", "day"]
@@ -152,7 +153,7 @@ class SummaryConfig(BaseModel):
     per_repeater_scheduled: bool = False
     skip_automated_only: bool = True
     schedule_delay_seconds: float = Field(default=120.0, ge=0, le=3600)
-    max_prompt_chars: int = Field(default=60_000, ge=4_000, le=200_000)
+    max_prompt_chars: int = Field(default=60_000, ge=0, le=200_000)
     poll_seconds: float = Field(default=60.0, ge=10)
 
 

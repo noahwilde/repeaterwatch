@@ -136,6 +136,85 @@ def test_summary_service_truncates_model_prompt_for_local_context(tmp_path):
         db.close()
 
 
+def test_summary_service_allows_unlimited_model_prompt(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+        _recording_with_transcript(db, repeater_id, now, "K0ABC " + ("traffic detail " * 500))
+        config = AppConfig()
+        config.summary.max_prompt_chars = 0
+        selection = select_source_transcripts(db, "last_hour", repeater_id=repeater_id, now=now)
+        service = SummaryService(db, config)
+
+        prompt = service._build_model_prompt(selection)
+
+        assert prompt == build_summary_prompt(selection)
+    finally:
+        db.close()
+
+
+def test_lm_studio_summary_uses_native_chat_with_reasoning_off(tmp_path, monkeypatch):
+    db = Database(tmp_path / "rw.sqlite3")
+    requests = []
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "output": [{"type": "message", "content": "K0ABC checked in and discussed weather."}],
+                "stats": {"input_tokens": 123, "total_output_tokens": 12, "reasoning_output_tokens": 0},
+            }
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.timeout = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, **kwargs):
+            requests.append({"url": url, **kwargs, "timeout": self.timeout})
+            return _FakeResponse()
+
+    monkeypatch.setattr("app.summarize.llm.httpx.AsyncClient", _FakeAsyncClient)
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+        _recording_with_transcript(db, repeater_id, now, "K0ABC checked in and discussed weather.")
+        config = AppConfig()
+        config.summary.backend = "lm-studio"
+        config.summary.base_url = "http://192.168.1.12:1234/v1"
+        config.summary.model = "daily-gemma-12b-64k"
+        config.summary.reasoning = "off"
+        config.summary.max_prompt_chars = 0
+        selection = select_source_transcripts(db, "last_hour", repeater_id=repeater_id, now=now)
+        service = SummaryService(db, config)
+
+        text = asyncio.run(service._lm_studio_summary(selection, repeater_id, "manual"))
+        usage_events = db.list_api_usage_events()
+
+        assert text == "K0ABC checked in and discussed weather."
+        assert requests[0]["url"] == "http://192.168.1.12:1234/api/v1/chat"
+        assert requests[0]["timeout"] == 600
+        assert requests[0]["json"]["model"] == "daily-gemma-12b-64k"
+        assert requests[0]["json"]["reasoning"] == "off"
+        assert requests[0]["json"]["store"] is False
+        assert "K0ABC checked in" in requests[0]["json"]["input"]
+        assert usage_events[0]["provider"] == "lm-studio"
+        assert usage_events[0]["prompt_tokens"] == 123
+        assert usage_events[0]["completion_tokens"] == 12
+        assert usage_events[0]["total_tokens"] == 135
+        assert usage_events[0]["reason"] == "lm_studio_summary"
+    finally:
+        db.close()
+
+
 def test_today_summary_window_uses_local_midnight(tmp_path):
     db = Database(tmp_path / "rw.sqlite3")
     try:
@@ -391,7 +470,10 @@ def test_daily_summary_prompt_includes_full_day_coverage_index(tmp_path):
         assert "Morning commute check-in" in index
         assert "evening net opened" in index
         assert "technical net followed" in index
+        assert "Do not copy it, restate it line by line" in index
         assert "Ensure complete chronological coverage of the entire day" in prompt
+        assert "synthesized narrative, not a log, timeline, or list of timestamps" in prompt
+        assert "Group repeated automated repeater IDs" in prompt
         assert "If multiple nets or check-in sessions occur back to back, mention each one separately" in prompt
     finally:
         db.close()

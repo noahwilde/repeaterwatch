@@ -18,7 +18,7 @@
     <title>RepeaterWatch</title>
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icons/repeaterwatch.svg" />
-    <link rel="stylesheet" href="/styles.css?v=62" />
+    <link rel="stylesheet" href="/styles.css?v=63" />
   </head>
   <body>
     <div id="pullRefresh" class="pull-refresh" role="status" aria-live="polite">
@@ -501,6 +501,7 @@
                 <select name="summary_backend">
                   <option value="noop">Local extractive</option>
                   <option value="openai-compatible">OpenAI-compatible / LM Studio</option>
+                  <option value="lm-studio">LM Studio native</option>
                   <option value="ollama">Ollama</option>
                 </select>
               </label>
@@ -513,12 +514,22 @@
                 <input name="summary_model" placeholder="gemma-3-1b-it" />
               </label>
               <label>
+                <span>Summary reasoning</span>
+                <select name="summary_reasoning">
+                  <option value="off">Off</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="on">On</option>
+                </select>
+              </label>
+              <label>
                 <span>Summary delay seconds</span>
                 <input name="summary_schedule_delay_seconds" type="number" min="0" max="3600" step="1" />
               </label>
               <label>
                 <span>Summary prompt limit</span>
-                <input name="summary_max_prompt_chars" type="number" min="4000" max="200000" step="1000" />
+                <input name="summary_max_prompt_chars" type="number" min="0" max="200000" step="1000" />
               </label>
               <label class="check">
                 <input name="summary_window_quarter_hour" type="checkbox" />
@@ -633,6 +644,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=62" type="module"></script>
+    <script src="/app.js?v=63" type="module"></script>
   </body>
 </html>

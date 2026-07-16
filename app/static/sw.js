@@ -1,9 +1,9 @@
-const CACHE_NAME = "repeaterwatch-static-v62";
+const CACHE_NAME = "repeaterwatch-static-v63";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
-  "/styles.css?v=62",
-  "/app.js?v=62",
+  "/styles.css?v=63",
+  "/app.js?v=63",
   "/manifest.json",
   "/icons/repeaterwatch.svg",
 ];

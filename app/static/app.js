@@ -2194,8 +2194,9 @@ function renderApiUsageSettings(config) {
   form.elements.summary_backend.value = config.summary.backend || "noop";
   form.elements.summary_base_url.value = config.summary.base_url || "";
   form.elements.summary_model.value = config.summary.model || "";
+  form.elements.summary_reasoning.value = config.summary.reasoning || "off";
   form.elements.summary_schedule_delay_seconds.value = config.summary.schedule_delay_seconds;
-  form.elements.summary_max_prompt_chars.value = config.summary.max_prompt_chars || 60000;
+  form.elements.summary_max_prompt_chars.value = config.summary.max_prompt_chars ?? 60000;
   form.elements.summary_window_quarter_hour.checked = scheduledWindows.has("quarter_hour");
   form.elements.summary_window_hour.checked = scheduledWindows.has("hour");
   form.elements.summary_window_day.checked = scheduledWindows.has("day");
@@ -2577,12 +2578,13 @@ if (els.apiUsageSettingsForm) {
             backend: data.summary_backend || "noop",
             base_url: data.summary_base_url || "http://localhost:11434",
             model: data.summary_model || "llama3.1",
+            reasoning: data.summary_reasoning || "off",
             min_transcripts: Number(data.summary_min_transcripts),
             scheduled_windows: scheduledWindows,
             per_repeater_scheduled: els.apiUsageSettingsForm.elements.per_repeater_scheduled.checked,
             skip_automated_only: els.apiUsageSettingsForm.elements.skip_automated_only.checked,
             schedule_delay_seconds: Number(data.summary_schedule_delay_seconds),
-            max_prompt_chars: Number(data.summary_max_prompt_chars || 60000),
+            max_prompt_chars: Number(data.summary_max_prompt_chars ?? 60000),
           },
           activity_chat: {
             backend: data.activity_chat_backend || "noop",

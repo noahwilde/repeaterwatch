@@ -332,14 +332,26 @@ base_url = "http://localhost:11434"
 model = "llama3.1"
 ```
 
-For LM Studio or another OpenAI-compatible local text server, use the OpenAI-compatible backend with the server's `/v1` URL. If RepeaterWatch is running on a Raspberry Pi and LM Studio is on another computer, use that computer's LAN IP address instead of `localhost`:
+For LM Studio summaries, prefer the native backend. It uses LM Studio's `/api/v1/chat` endpoint, can turn reasoning off, and avoids spending local GPU time on hidden reasoning tokens. If RepeaterWatch is running on a Raspberry Pi and LM Studio is on another computer, use that computer's LAN IP address instead of `localhost`:
+
+```toml
+[summary]
+backend = "lm-studio"
+base_url = "http://192.168.1.12:1234"
+model = "daily-gemma-12b-64k"
+reasoning = "off"
+max_prompt_chars = 0
+```
+
+Set `max_prompt_chars = 0` to avoid app-side truncation. The selected model still needs enough context for the full prompt.
+
+For activity chat, or for another OpenAI-compatible local text server, use the OpenAI-compatible backend with the server's `/v1` URL:
 
 ```toml
 [summary]
 backend = "openai-compatible"
 base_url = "http://192.168.1.12:1234/v1"
 model = "gemma-3-1b-it"
-max_prompt_chars = 24000
 
 [activity_chat]
 backend = "openai-compatible"
