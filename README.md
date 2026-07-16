@@ -339,6 +339,7 @@ For LM Studio or another OpenAI-compatible local text server, use the OpenAI-com
 backend = "openai-compatible"
 base_url = "http://192.168.1.12:1234/v1"
 model = "gemma-3-1b-it"
+max_prompt_chars = 24000
 
 [activity_chat]
 backend = "openai-compatible"

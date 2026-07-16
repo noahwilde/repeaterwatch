@@ -516,6 +516,10 @@
                 <span>Summary delay seconds</span>
                 <input name="summary_schedule_delay_seconds" type="number" min="0" max="3600" step="1" />
               </label>
+              <label>
+                <span>Summary prompt limit</span>
+                <input name="summary_max_prompt_chars" type="number" min="4000" max="200000" step="1000" />
+              </label>
               <label class="check">
                 <input name="summary_window_quarter_hour" type="checkbox" />
                 <span>15-minute scheduled summaries</span>

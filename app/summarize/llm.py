@@ -346,6 +346,22 @@ class SummaryService:
         self.db = db
         self.config = config
 
+    def _build_model_prompt(self, selection: SummarySelection) -> str:
+        prompt = build_summary_prompt(selection)
+        max_chars = self.config.summary.max_prompt_chars
+        if max_chars > 0 and len(prompt) > max_chars:
+            logger.warning(
+                "Summary prompt for %s window truncated from %s to %s characters",
+                selection.window_name,
+                len(prompt),
+                max_chars,
+            )
+            return (
+                prompt[:max_chars].rstrip()
+                + "\n\n[Input truncated to fit the configured summary model context limit.]"
+            )
+        return prompt
+
     async def _summary_text_and_status(
         self,
         selection: SummarySelection,
@@ -526,7 +542,7 @@ class SummaryService:
             "model": self.config.summary.model,
             "messages": [
                 {"role": "system", "content": "You summarize radio traffic conservatively."},
-                {"role": "user", "content": build_summary_prompt(selection)},
+                {"role": "user", "content": self._build_model_prompt(selection)},
             ],
             "temperature": 0.1,
         }
@@ -543,6 +559,12 @@ class SummaryService:
                             provider_retry_after_seconds(exc.response),
                             details.message,
                             quota_exceeded=provider_error_is_insufficient_quota(details),
+                        ) from exc
+                    details = provider_error_details(exc.response)
+                    if details.message:
+                        raise RuntimeError(
+                            f"OpenAI-compatible summary provider returned HTTP {exc.response.status_code}: "
+                            f"{details.message}"
                         ) from exc
                     raise
             data = response.json()
@@ -585,7 +607,7 @@ class SummaryService:
         payload = {
             "model": self.config.summary.model,
             "stream": False,
-            "messages": [{"role": "user", "content": build_summary_prompt(selection)}],
+            "messages": [{"role": "user", "content": self._build_model_prompt(selection)}],
             "options": {"temperature": 0.1},
         }
         async with httpx.AsyncClient(timeout=180) as client:

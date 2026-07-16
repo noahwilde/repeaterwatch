@@ -117,6 +117,25 @@ def test_summary_prompt_labels_automated_only_transcripts(tmp_path):
         db.close()
 
 
+def test_summary_service_truncates_model_prompt_for_local_context(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+        _recording_with_transcript(db, repeater_id, now, "K0ABC " + ("traffic detail " * 500))
+        config = AppConfig()
+        config.summary.max_prompt_chars = 4_000
+        selection = select_source_transcripts(db, "last_hour", repeater_id=repeater_id, now=now)
+        service = SummaryService(db, config)
+
+        prompt = service._build_model_prompt(selection)
+
+        assert len(prompt) < len(build_summary_prompt(selection))
+        assert "Input truncated" in prompt
+    finally:
+        db.close()
+
+
 def test_today_summary_window_uses_local_midnight(tmp_path):
     db = Database(tmp_path / "rw.sqlite3")
     try:

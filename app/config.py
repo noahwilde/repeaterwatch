@@ -152,6 +152,7 @@ class SummaryConfig(BaseModel):
     per_repeater_scheduled: bool = False
     skip_automated_only: bool = True
     schedule_delay_seconds: float = Field(default=120.0, ge=0, le=3600)
+    max_prompt_chars: int = Field(default=60_000, ge=4_000, le=200_000)
     poll_seconds: float = Field(default=60.0, ge=10)
 
 

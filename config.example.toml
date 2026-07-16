@@ -68,6 +68,7 @@ scheduled_windows = ["hour", "day"]
 per_repeater_scheduled = false
 skip_automated_only = true
 schedule_delay_seconds = 120.0
+max_prompt_chars = 60000
 poll_seconds = 60.0
 
 [activity_chat]
