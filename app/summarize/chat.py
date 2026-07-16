@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from app.ai_provider import openai_compatible_headers
 from app.config import AppConfig
 from app.db import Database
 from app.models import ActivityChatMessage, ActivityChatRequest
@@ -362,16 +362,17 @@ class ActivityChatService:
         prompt: ActivityChatPrompt,
     ) -> str:
         config = self.config.activity_chat
-        api_key = os.getenv(config.api_key_env, "")
-        if not api_key:
+        base_url = config.base_url.rstrip("/")
+        try:
+            headers = openai_compatible_headers(base_url, config.api_key_env)
+        except RuntimeError:
             self._record_chat_usage(payload, context, prompt, "error", "missing_api_key")
-            raise RuntimeError(f"{config.api_key_env} is not set")
-        url = f"{config.base_url.rstrip('/')}/chat/completions"
+            raise
+        url = f"{base_url}/chat/completions"
         request_payload = {
             "model": config.model,
             "messages": self._messages(payload, prompt),
         }
-        headers = {"Authorization": f"Bearer {api_key}"}
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=120) as client:

@@ -18,7 +18,7 @@
     <title>RepeaterWatch</title>
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icons/repeaterwatch.svg" />
-    <link rel="stylesheet" href="/styles.css?v=61" />
+    <link rel="stylesheet" href="/styles.css?v=62" />
   </head>
   <body>
     <div id="pullRefresh" class="pull-refresh" role="status" aria-live="polite">
@@ -457,6 +457,22 @@
             <div id="apiUsageBreakdown" class="api-usage-breakdown"></div>
             <form id="apiUsageSettingsForm" class="form-grid">
               <label>
+                <span>Transcript backend</span>
+                <select name="transcription_backend">
+                  <option value="noop">Disabled</option>
+                  <option value="faster-whisper">Local faster-whisper</option>
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                </select>
+              </label>
+              <label>
+                <span>Local transcript model</span>
+                <input name="transcription_model" placeholder="base.en" />
+              </label>
+              <label>
+                <span>Remote transcript base URL</span>
+                <input name="remote_base_url" placeholder="https://api.openai.com/v1" />
+              </label>
+              <label>
                 <span>Remote transcript model</span>
                 <input name="remote_model" placeholder="gpt-4o-transcribe" />
               </label>
@@ -479,6 +495,22 @@
               <label>
                 <span>Minimum transcripts per summary</span>
                 <input name="summary_min_transcripts" type="number" min="1" max="100" step="1" />
+              </label>
+              <label>
+                <span>Summary backend</span>
+                <select name="summary_backend">
+                  <option value="noop">Local extractive</option>
+                  <option value="openai-compatible">OpenAI-compatible / LM Studio</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </label>
+              <label>
+                <span>Summary base URL</span>
+                <input name="summary_base_url" placeholder="http://192.168.1.12:1234/v1" />
+              </label>
+              <label>
+                <span>Summary model</span>
+                <input name="summary_model" placeholder="gemma-3-1b-it" />
               </label>
               <label>
                 <span>Summary delay seconds</span>
@@ -515,6 +547,10 @@
               <label>
                 <span>Activity chat model</span>
                 <input name="activity_chat_model" placeholder="gpt-5.4-nano" />
+              </label>
+              <label>
+                <span>Activity chat base URL</span>
+                <input name="activity_chat_base_url" placeholder="http://192.168.1.12:1234/v1" />
               </label>
               <label>
                 <span>Activity chat default hours</span>
@@ -593,6 +629,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=61" type="module"></script>
+    <script src="/app.js?v=62" type="module"></script>
   </body>
 </html>

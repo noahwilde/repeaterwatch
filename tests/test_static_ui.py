@@ -57,10 +57,10 @@ def test_service_worker_forces_static_shell_refresh() -> None:
     html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     sw = (STATIC_ROOT / "sw.js").read_text(encoding="utf-8")
 
-    assert 'href="/styles.css?v=61"' in html
-    assert 'src="/app.js?v=61"' in html
-    assert 'const CACHE_NAME = "repeaterwatch-static-v61";' in sw
-    assert '"/styles.css?v=61"' in sw
-    assert '"/app.js?v=61"' in sw
+    assert 'href="/styles.css?v=62"' in html
+    assert 'src="/app.js?v=62"' in html
+    assert 'const CACHE_NAME = "repeaterwatch-static-v62";' in sw
+    assert '"/styles.css?v=62"' in sw
+    assert '"/app.js?v=62"' in sw
     assert "caches.delete(key)" in sw
     assert "client.navigate(client.url)" in sw

@@ -332,7 +332,25 @@ base_url = "http://localhost:11434"
 model = "llama3.1"
 ```
 
+For LM Studio or another OpenAI-compatible local text server, use the OpenAI-compatible backend with the server's `/v1` URL. If RepeaterWatch is running on a Raspberry Pi and LM Studio is on another computer, use that computer's LAN IP address instead of `localhost`:
+
+```toml
+[summary]
+backend = "openai-compatible"
+base_url = "http://192.168.1.12:1234/v1"
+model = "gemma-3-1b-it"
+
+[activity_chat]
+backend = "openai-compatible"
+base_url = "http://192.168.1.12:1234/v1"
+model = "gemma-3-1b-it"
+```
+
+OpenAI-compatible local/private LAN URLs do not require an API key. Public OpenAI-compatible providers still require the configured API key environment variable.
+
 AI summaries receive trusted receiver context for each transcript, including repeater name, frequency, tone, optional location, coverage area, type, and notes. Combined summaries preserve the source repeater metadata for each transcript and should not merge unrelated traffic unless the transcripts clearly support correlation.
+
+LM Studio is a text-generation server; it does not provide RepeaterWatch's multipart `/audio/transcriptions` workflow in normal LM Studio server mode. For local transcription, use `faster-whisper`, or point `[transcription].remote_base_url` at a separate OpenAI-compatible speech-to-text service that supports `/audio/transcriptions`.
 
 ## CLI Reference
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -13,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from app.ai_provider import openai_compatible_headers
 from app.config import AppConfig
 from app.db import Database
 from app.notify.webpush import non_automated_transcript_text
@@ -321,6 +321,8 @@ def build_summary_prompt(selection: SummarySelection) -> str:
         "Summarize only analog FM amateur radio repeater traffic that is actually present in the transcripts. "
         "Do not list absent categories such as no weather, no emergencies, no nets, no check-ins, or no user "
         "traffic unless a transcript explicitly discusses the absence. Keep the summary concise. "
+        "Use plain text only; do not use Markdown formatting, bullet lists, numbered lists, headings, tables, "
+        "or emoji. "
         f"{daily_guidance}"
         "Never include phrases such as no weather, no nets, no emergencies, no user traffic, or no announcements. "
         "Include only heard topics, stations or callsigns, nets/check-ins, weather/road/emergency mentions, repeated "
@@ -517,10 +519,9 @@ class SummaryService:
         repeater_id: int | None,
         operation: str,
     ) -> str:
-        api_key = os.getenv(self.config.summary.api_key_env, "")
-        if not api_key:
-            raise RuntimeError(f"{self.config.summary.api_key_env} is not set")
-        url = f"{self.config.summary.base_url.rstrip('/')}/chat/completions"
+        base_url = self.config.summary.base_url.rstrip("/")
+        headers = openai_compatible_headers(base_url, self.config.summary.api_key_env)
+        url = f"{base_url}/chat/completions"
         payload = {
             "model": self.config.summary.model,
             "messages": [
@@ -529,7 +530,6 @@ class SummaryService:
             ],
             "temperature": 0.1,
         }
-        headers = {"Authorization": f"Bearer {api_key}"}
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=120) as client:

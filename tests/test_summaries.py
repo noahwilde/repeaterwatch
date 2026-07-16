@@ -89,6 +89,8 @@ def test_summary_source_selection_window_and_repeater_filter(tmp_path):
         assert "trusted receiver context" in prompt
         assert "Transcript Class: possible user traffic" in prompt
         assert "Do not list absent categories" in prompt
+        assert "Use plain text only" in prompt
+        assert "do not use Markdown" in prompt
         assert "Do not attribute automated repeater" in prompt
     finally:
         db.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from app.ai_provider import base_url_allows_missing_api_key
 from app.config import AppConfig, RepeaterConfig, ScanRangeConfig, SdrConfig, VoxConfig, default_config, load_config, save_config
 
 
@@ -70,6 +71,13 @@ def test_ai_usage_defaults_reduce_unnecessary_remote_calls():
     assert config.summary.skip_automated_only is True
     assert config.activity_chat.backend == "noop"
     assert config.activity_chat.model == "gpt-5.4-nano"
+
+
+def test_local_openai_compatible_urls_do_not_require_api_key():
+    assert base_url_allows_missing_api_key("http://localhost:1234/v1")
+    assert base_url_allows_missing_api_key("http://127.0.0.1:1234/v1")
+    assert base_url_allows_missing_api_key("http://192.168.1.12:1234/v1")
+    assert not base_url_allows_missing_api_key("https://api.openai.com/v1")
 
 
 def test_duplicate_repeater_names_rejected():

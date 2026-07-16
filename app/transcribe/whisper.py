@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -14,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from app.ai_provider import openai_compatible_headers
 from app.config import AppConfig
 from app.db import Database
 from app.provider_errors import (
@@ -611,13 +611,10 @@ class TranscriptionService:
         fallback_reason: str | None = None,
         fallback_primary_attempted: bool = False,
     ) -> TranscriptResult:
-        api_key = os.getenv(self.config.transcription.remote_api_key_env, "")
-        if not api_key:
-            raise RuntimeError(f"{self.config.transcription.remote_api_key_env} is not set")
         base_url = self.config.transcription.remote_base_url.rstrip("/")
+        headers = openai_compatible_headers(base_url, self.config.transcription.remote_api_key_env)
         url = f"{base_url}/audio/transcriptions"
         model_name = model or self.config.transcription.remote_model
-        headers = {"Authorization": f"Bearer {api_key}"}
         data = {
             "model": model_name,
             "prompt": build_transcription_prompt(recording),

@@ -2182,12 +2182,18 @@ function renderApiUsageSettings(config) {
   if (!els.apiUsageSettingsForm || document.activeElement.closest("#apiUsageSettingsForm")) return;
   const form = els.apiUsageSettingsForm;
   const scheduledWindows = new Set((config.summary && config.summary.scheduled_windows) || []);
+  form.elements.transcription_backend.value = config.transcription.backend || "noop";
+  form.elements.transcription_model.value = config.transcription.model || "";
+  form.elements.remote_base_url.value = config.transcription.remote_base_url || "";
   form.elements.remote_model.value = config.transcription.remote_model || "";
   form.elements.remote_fallback_model.value = config.transcription.remote_fallback_model || "";
   form.elements.remote_fallback_on_rate_limit.checked = Boolean(config.transcription.remote_fallback_on_rate_limit);
   form.elements.remote_fallback_low_confidence.checked = Boolean(config.transcription.remote_fallback_low_confidence);
   form.elements.remote_min_duration_seconds.value = config.transcription.remote_min_duration_seconds;
   form.elements.summary_min_transcripts.value = config.summary.min_transcripts;
+  form.elements.summary_backend.value = config.summary.backend || "noop";
+  form.elements.summary_base_url.value = config.summary.base_url || "";
+  form.elements.summary_model.value = config.summary.model || "";
   form.elements.summary_schedule_delay_seconds.value = config.summary.schedule_delay_seconds;
   form.elements.summary_window_quarter_hour.checked = scheduledWindows.has("quarter_hour");
   form.elements.summary_window_hour.checked = scheduledWindows.has("hour");
@@ -2196,6 +2202,7 @@ function renderApiUsageSettings(config) {
   form.elements.skip_automated_only.checked = Boolean(config.summary.skip_automated_only);
   form.elements.activity_chat_backend.value = config.activity_chat.backend || "noop";
   form.elements.activity_chat_model.value = config.activity_chat.model || "gpt-5.4-nano";
+  form.elements.activity_chat_base_url.value = config.activity_chat.base_url || "";
   form.elements.activity_chat_default_hours.value = config.activity_chat.default_hours || 24;
 }
 
@@ -2556,6 +2563,9 @@ if (els.apiUsageSettingsForm) {
         method: "PUT",
         body: JSON.stringify({
           transcription: {
+            backend: data.transcription_backend || "noop",
+            model: data.transcription_model || "base",
+            remote_base_url: data.remote_base_url || "https://api.openai.com/v1",
             remote_model: data.remote_model || "whisper-1",
             remote_fallback_model: data.remote_fallback_model || "gpt-4o-mini-transcribe",
             remote_fallback_on_rate_limit: els.apiUsageSettingsForm.elements.remote_fallback_on_rate_limit.checked,
@@ -2563,6 +2573,9 @@ if (els.apiUsageSettingsForm) {
             remote_min_duration_seconds: Number(data.remote_min_duration_seconds),
           },
           summary: {
+            backend: data.summary_backend || "noop",
+            base_url: data.summary_base_url || "http://localhost:11434",
+            model: data.summary_model || "llama3.1",
             min_transcripts: Number(data.summary_min_transcripts),
             scheduled_windows: scheduledWindows,
             per_repeater_scheduled: els.apiUsageSettingsForm.elements.per_repeater_scheduled.checked,
@@ -2572,6 +2585,7 @@ if (els.apiUsageSettingsForm) {
           activity_chat: {
             backend: data.activity_chat_backend || "noop",
             model: data.activity_chat_model || "gpt-5.4-nano",
+            base_url: data.activity_chat_base_url || "https://api.openai.com/v1",
             default_hours: Number(data.activity_chat_default_hours || 24),
           },
         }),
