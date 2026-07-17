@@ -147,7 +147,7 @@ Activity Chat is manual and stateless: the browser sends the current chat thread
 OpenAI-compatible transcription and summary backends are optional. To reduce unnecessary API calls:
 
 - Leave `[transcription].backend` and `[summary].backend` as `noop` until you are ready to use remote AI.
-- Prefer local `faster-whisper` transcription and Ollama summaries when the Pi can handle the workload.
+- Prefer local `faster-whisper` transcription and Ollama summaries when cost matters more than transcription quality. For best callsign and weak-signal transcription quality, use the OpenAI-compatible transcription backend with `gpt-4o-transcribe`.
 - Keep `[transcription].remote_min_duration_seconds` at `2.0` or higher so very short static bursts and courtesy tones are marked `[static only]` without a remote transcription call.
 - Use `[summary].scheduled_windows = ["hour", "day"]` to avoid automatic 15-minute summaries. Add `"quarter_hour"` only if you want them.
 - Keep `[summary].per_repeater_scheduled = false` unless you need separate scheduled summaries for every repeater. Manual per-repeater summaries still work from the Summary tab.
@@ -321,7 +321,7 @@ model = "base"
 compute_type = "int8"
 ```
 
-Larger Whisper models improve accuracy but are slower on Raspberry Pi hardware. Ham callsigns may still be misrecognized; RepeaterWatch stores the original transcript and supports corrections from the API/UI path.
+Larger Whisper models improve accuracy but are slower on Raspberry Pi hardware, and very small models can perform poorly on weak repeater audio and callsigns. For quality-sensitive transcription, use the OpenAI-compatible backend with `remote_model = "gpt-4o-transcribe"` and keep `remote_min_duration_seconds = 2.0` or higher to avoid sending short static bursts. Ham callsigns may still be misrecognized; RepeaterWatch stores the original transcript and supports corrections from the API/UI path.
 
 Default summary mode is `noop`, which creates a local extractive summary and never invents callsigns. For Ollama:
 

@@ -63,6 +63,7 @@ def test_ai_usage_defaults_reduce_unnecessary_remote_calls():
     config = AppConfig()
 
     assert config.transcription.remote_min_duration_seconds == 2.0
+    assert config.transcription.remote_model == "gpt-4o-transcribe"
     assert config.transcription.remote_fallback_on_rate_limit is True
     assert config.transcription.remote_fallback_model == "gpt-4o-mini-transcribe"
     assert config.transcription.remote_fallback_low_confidence is True
