@@ -718,7 +718,7 @@ class SummaryWorker:
         summary_ids: list[int] = []
         now_utc = _as_utc(now)
         self.db.prune_summary_jobs((now_utc - SUMMARY_QUEUE_MAX_AGE).isoformat(timespec="seconds"))
-        if self._remote_backoff_active():
+        if self.config.summary.enabled and self._remote_backoff_active():
             return summary_ids
         if self.config.summary.enabled:
             summary_ids.extend(await self._process_summary_queue(now_utc))
