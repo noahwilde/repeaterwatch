@@ -18,7 +18,7 @@
     <title>RepeaterWatch</title>
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icons/repeaterwatch.svg" />
-    <link rel="stylesheet" href="/styles.css?v=63" />
+    <link rel="stylesheet" href="/styles.css?v=64" />
   </head>
   <body>
     <div id="pullRefresh" class="pull-refresh" role="status" aria-live="polite">
@@ -284,6 +284,16 @@
             <p id="summarySearchStatus" class="muted form-status" aria-live="polite"></p>
             <p id="summaryStatus" class="muted"></p>
             <div id="adHocSummary" class="summary-ad-hoc" hidden></div>
+            <details class="summary-queue-panel" open>
+              <summary>
+                <span>Queued summaries</span>
+                <span id="summaryQueueStatus" class="muted">Checking</span>
+              </summary>
+              <div class="summary-queue-actions">
+                <button id="clearSummaryQueueBtn" class="secondary" type="button">Clear queue</button>
+              </div>
+              <div id="summaryQueue" class="summary-list"></div>
+            </details>
             <div id="summaries" class="summary-list"></div>
           </div>
         </section>
@@ -496,6 +506,10 @@
                 <span>Minimum transcripts per summary</span>
                 <input name="summary_min_transcripts" type="number" min="1" max="100" step="1" />
               </label>
+              <label class="check">
+                <input name="summary_enabled" type="checkbox" />
+                <span>Enable scheduled summary generation</span>
+              </label>
               <label>
                 <span>Summary backend</span>
                 <select name="summary_backend">
@@ -644,6 +658,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=63" type="module"></script>
+    <script src="/app.js?v=64" type="module"></script>
   </body>
 </html>

@@ -74,7 +74,7 @@ class Database:
                 status TEXT NOT NULL DEFAULT 'completed',
                 error TEXT,
                 created_at TEXT NOT NULL,
-                FOREIGN KEY(repeater_id) REFERENCES repeaters(id) ON DELETE SET NULL
+                FOREIGN KEY(repeater_id) REFERENCES repeaters(id) ON DELETE CASCADE
             )
             """,
             """
@@ -118,6 +118,22 @@ class Database:
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(repeater_id) REFERENCES repeaters(id) ON DELETE SET NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS summary_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                window_name TEXT NOT NULL,
+                repeater_id INTEGER,
+                start_time TEXT NOT NULL,
+                end_time TEXT NOT NULL,
+                source_transcript_ids TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(repeater_id) REFERENCES repeaters(id) ON DELETE CASCADE
             )
             """,
             """
@@ -212,6 +228,9 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings(status)",
             "CREATE INDEX IF NOT EXISTS idx_transcripts_status ON transcripts(status)",
             "CREATE INDEX IF NOT EXISTS idx_summaries_created_at ON summaries(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_summary_jobs_status_created ON summary_jobs(status, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_summary_jobs_start_time ON summary_jobs(start_time)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_summary_jobs_unique_window ON summary_jobs(window_name, COALESCE(repeater_id, -1), start_time, end_time)",
             "CREATE INDEX IF NOT EXISTS idx_notification_events_rule_created ON notification_events(rule_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_api_usage_events_created ON api_usage_events(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_api_usage_events_type_created ON api_usage_events(call_type, created_at)",
@@ -689,6 +708,126 @@ class Database:
             "SELECT * FROM summaries ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
+
+    def _normalize_summary_job(self, row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+        try:
+            source_ids = json.loads(str(normalized.get("source_transcript_ids") or "[]"))
+        except json.JSONDecodeError:
+            source_ids = []
+        normalized["source_transcript_ids"] = source_ids if isinstance(source_ids, list) else []
+        normalized["attempts"] = int(normalized.get("attempts") or 0)
+        return normalized
+
+    def find_summary_job(
+        self,
+        window_name: str,
+        repeater_id: int | None,
+        start_time: str,
+        end_time: str,
+    ) -> dict[str, Any] | None:
+        if repeater_id is None:
+            row = self.query_one(
+                """
+                SELECT * FROM summary_jobs
+                WHERE window_name = ? AND repeater_id IS NULL AND start_time = ? AND end_time = ?
+                LIMIT 1
+                """,
+                (window_name, start_time, end_time),
+            )
+        else:
+            row = self.query_one(
+                """
+                SELECT * FROM summary_jobs
+                WHERE window_name = ? AND repeater_id = ? AND start_time = ? AND end_time = ?
+                LIMIT 1
+                """,
+                (window_name, repeater_id, start_time, end_time),
+            )
+        return self._normalize_summary_job(row) if row else None
+
+    def upsert_summary_job(self, data: dict[str, Any]) -> int:
+        now = utc_now()
+        start_time = data["start_time"]
+        end_time = data["end_time"]
+        existing = self.find_summary_job(data["window_name"], data.get("repeater_id"), start_time, end_time)
+        source_ids = json.dumps(data.get("source_transcript_ids", []))
+        if existing:
+            self.execute(
+                """
+                UPDATE summary_jobs
+                SET source_transcript_ids = ?, status = 'pending', last_error = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (source_ids, now, existing["id"]),
+            )
+            return int(existing["id"])
+        cursor = self.execute(
+            """
+            INSERT INTO summary_jobs
+            (window_name, repeater_id, start_time, end_time, source_transcript_ids,
+             status, attempts, last_error, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?)
+            """,
+            (
+                data["window_name"],
+                data.get("repeater_id"),
+                start_time,
+                end_time,
+                source_ids,
+                data.get("created_at", now),
+                now,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+    def list_summary_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self.query_all(
+            """
+            SELECT j.*, r.name AS repeater_name
+            FROM summary_jobs j
+            LEFT JOIN repeaters r ON r.id = j.repeater_id
+            ORDER BY j.start_time ASC, j.id ASC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        )
+        return [self._normalize_summary_job(row) for row in rows]
+
+    def pending_summary_jobs(self, created_after: str, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.query_all(
+            """
+            SELECT j.*, r.name AS repeater_name
+            FROM summary_jobs j
+            LEFT JOIN repeaters r ON r.id = j.repeater_id
+            WHERE j.created_at >= ? AND j.status = 'pending'
+            ORDER BY j.start_time ASC, j.id ASC
+            LIMIT ?
+            """,
+            (created_after, max(1, int(limit))),
+        )
+        return [self._normalize_summary_job(row) for row in rows]
+
+    def mark_summary_job_error(self, job_id: int, error: str) -> None:
+        self.execute(
+            """
+            UPDATE summary_jobs
+            SET attempts = attempts + 1, last_error = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (error[:1000], utc_now(), job_id),
+        )
+
+    def delete_summary_job(self, job_id: int) -> None:
+        self.execute("DELETE FROM summary_jobs WHERE id = ?", (job_id,))
+
+    def clear_summary_jobs(self) -> int:
+        cursor = self.execute("DELETE FROM summary_jobs")
+        return int(cursor.rowcount)
+
+    def prune_summary_jobs(self, created_before: str) -> int:
+        cursor = self.execute("DELETE FROM summary_jobs WHERE created_at < ?", (created_before,))
+        return int(cursor.rowcount)
 
     def summaries_between(
         self,
@@ -1180,6 +1319,7 @@ class Database:
             "activity": self.recording_activity(hours=activity_hours, bucket_minutes=activity_bucket_minutes),
             "transcripts": self.list_transcripts(transcript_limit),
             "summaries": self.list_summaries(summary_limit),
+            "summary_jobs": self.list_summary_jobs(200),
             "notification_events": self.list_notification_events(20),
             "keyword_rules": self.list_keyword_rules(),
         }

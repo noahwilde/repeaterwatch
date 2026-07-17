@@ -139,6 +139,7 @@ SummaryScheduledWindow = Literal["quarter_hour", "hour", "day"]
 
 
 class SummaryConfig(BaseModel):
+    enabled: bool = True
     backend: Literal["noop", "openai-compatible", "lm-studio", "ollama"] = "noop"
     model: str = "llama3.1"
     base_url: str = "http://localhost:11434"

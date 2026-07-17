@@ -44,6 +44,9 @@ const els = {
   summaryStats: document.querySelector("#summaryStats"),
   summaryStatus: document.querySelector("#summaryStatus"),
   adHocSummary: document.querySelector("#adHocSummary"),
+  summaryQueueStatus: document.querySelector("#summaryQueueStatus"),
+  summaryQueue: document.querySelector("#summaryQueue"),
+  clearSummaryQueueBtn: document.querySelector("#clearSummaryQueueBtn"),
   activityChatRange: document.querySelector("#activityChatRange"),
   activityChatRepeater: document.querySelector("#activityChatRepeater"),
   activityChatMessages: document.querySelector("#activityChatMessages"),
@@ -140,6 +143,7 @@ let currentTranscripts = [];
 let currentKeywordRules = [];
 let currentSummaries = [];
 let currentRepeaters = [];
+let currentSummaryQueue = [];
 let summarySearchTerm = "";
 let adHocSummary = null;
 let activityChatMessages = loadActivityChatMessages();
@@ -530,6 +534,7 @@ function renderDashboard(data) {
   renderSdrWindow(data.sdr_window);
   renderRecordings(data.recordings, data.transcripts, data.keyword_rules);
   renderSummaries(data.summaries, data.repeaters);
+  renderSummaryQueue(data.summary_jobs, data.repeaters);
   renderActivityChatScopeOptions(data.repeaters);
   renderRules(data.keyword_rules);
   renderEvents(data.notification_events);
@@ -1365,6 +1370,50 @@ function renderSummaries(summaries, repeaters = []) {
   updateSummarySearchStatus(visibleSummaries.length, currentSummaries.length);
 }
 
+function renderSummaryQueue(jobs, repeaters = []) {
+  currentSummaryQueue = Array.isArray(jobs) ? jobs : [];
+  if (!els.summaryQueue) return;
+  const repeaterNames = new Map((Array.isArray(repeaters) ? repeaters : currentRepeaters).map((repeater) => [String(repeater.id), repeater.name]));
+  if (els.summaryQueueStatus) {
+    els.summaryQueueStatus.textContent = currentSummaryQueue.length
+      ? `${currentSummaryQueue.length} pending`
+      : "Empty";
+  }
+  els.summaryQueue.innerHTML = "";
+  if (!currentSummaryQueue.length) {
+    setEmpty(els.summaryQueue, "No queued summaries.");
+    return;
+  }
+  for (const job of currentSummaryQueue) {
+    const sourceCount = summarySourceCount(job);
+    const row = item(`
+      <div class="summary-card-head">
+        <div>
+          <h3>${escapeHtml(formatSummaryRange(job))}</h3>
+          <p class="muted">${callsignTextHtml(summaryScope(job, repeaterNames))} - ${escapeHtml(formatSummaryWindow(job.window_name))}</p>
+        </div>
+        <span class="pill state-${escapeHtml(job.status || "pending")}">${escapeHtml(formatStatus(job.status || "pending"))}</span>
+      </div>
+      <div class="summary-card-foot">
+        <div class="meta">
+          <span class="pill">Queued ${escapeHtml(formatTime(job.created_at))}</span>
+          <span class="pill">${sourceCount} ${sourceCount === 1 ? "recording" : "recordings"}</span>
+          <span class="pill">${formatCount(job.attempts || 0)} attempt${Number(job.attempts || 0) === 1 ? "" : "s"}</span>
+        </div>
+        <button class="danger" data-delete-summary-job="${job.id}" type="button">Remove</button>
+      </div>
+      ${job.last_error ? `<p class="state-error">${escapeHtml(compactText(job.last_error, "", 220))}</p>` : ""}
+    `);
+    row.classList.add("summary-card");
+    row.dataset.summaryJobId = String(job.id);
+    row.querySelector("[data-delete-summary-job]").addEventListener("click", async () => {
+      await fetchJson(`/api/summaries/queue/${job.id}`, { method: "DELETE" });
+      refreshDashboard();
+    });
+    els.summaryQueue.appendChild(row);
+  }
+}
+
 function renderSummaryScopeOptions(repeaters) {
   if (!els.summaryRepeater) return;
   const nextValues = ["", ...repeaters.map((repeater) => String(repeater.id))];
@@ -2191,6 +2240,7 @@ function renderApiUsageSettings(config) {
   form.elements.remote_fallback_low_confidence.checked = Boolean(config.transcription.remote_fallback_low_confidence);
   form.elements.remote_min_duration_seconds.value = config.transcription.remote_min_duration_seconds;
   form.elements.summary_min_transcripts.value = config.summary.min_transcripts;
+  form.elements.summary_enabled.checked = config.summary.enabled !== false;
   form.elements.summary_backend.value = config.summary.backend || "noop";
   form.elements.summary_base_url.value = config.summary.base_url || "";
   form.elements.summary_model.value = config.summary.model || "";
@@ -2575,6 +2625,7 @@ if (els.apiUsageSettingsForm) {
             remote_min_duration_seconds: Number(data.remote_min_duration_seconds),
           },
           summary: {
+            enabled: els.apiUsageSettingsForm.elements.summary_enabled.checked,
             backend: data.summary_backend || "noop",
             base_url: data.summary_base_url || "http://localhost:11434",
             model: data.summary_model || "llama3.1",
@@ -2648,6 +2699,13 @@ els.clearSummariesBtn.addEventListener("click", async () => {
   adHocSummary = null;
   refreshDashboard();
 });
+if (els.clearSummaryQueueBtn) {
+  els.clearSummaryQueueBtn.addEventListener("click", async () => {
+    if (!window.confirm("Remove all queued summaries?")) return;
+    await fetchJson("/api/summaries/queue", { method: "DELETE" });
+    refreshDashboard();
+  });
+}
 els.clearEventsBtn.addEventListener("click", async () => {
   if (!window.confirm("Clear notification history?")) return;
   await fetchJson("/api/notifications/events", { method: "DELETE" });

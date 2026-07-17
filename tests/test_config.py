@@ -67,6 +67,7 @@ def test_ai_usage_defaults_reduce_unnecessary_remote_calls():
     assert config.transcription.remote_fallback_on_rate_limit is True
     assert config.transcription.remote_fallback_model == "gpt-4o-mini-transcribe"
     assert config.transcription.remote_fallback_low_confidence is True
+    assert config.summary.enabled is True
     assert config.summary.scheduled_windows == ["hour", "day"]
     assert config.summary.per_repeater_scheduled is False
     assert config.summary.skip_automated_only is True

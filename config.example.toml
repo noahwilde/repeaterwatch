@@ -57,6 +57,7 @@ remote_min_duration_seconds = 2.0
 poll_seconds = 5.0
 
 [summary]
+enabled = true
 backend = "noop"
 model = "llama3.1"
 base_url = "http://localhost:11434"

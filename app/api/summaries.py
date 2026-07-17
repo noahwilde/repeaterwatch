@@ -30,6 +30,26 @@ async def generate_summary(payload: SummaryRequest, request: Request) -> dict:
         raise HTTPException(status_code=502, detail=f"Summary provider request failed: {exc}") from exc
 
 
+@router.get("/queue")
+def list_summary_queue(request: Request, limit: int = 200) -> list[dict]:
+    return get_db(request).list_summary_jobs(limit)
+
+
+@router.delete("/queue/{job_id}")
+def delete_summary_queue_job(job_id: int, request: Request) -> dict[str, int | str]:
+    db = get_db(request)
+    if not db.query_one("SELECT id FROM summary_jobs WHERE id = ?", (job_id,)):
+        raise HTTPException(status_code=404, detail="Summary queue job not found")
+    db.delete_summary_job(job_id)
+    return {"status": "deleted", "id": job_id}
+
+
+@router.delete("/queue")
+def clear_summary_queue(request: Request) -> dict[str, int | str]:
+    deleted = get_db(request).clear_summary_jobs()
+    return {"status": "cleared", "deleted": deleted}
+
+
 @router.delete("/{summary_id}")
 def delete_summary(summary_id: int, request: Request) -> dict[str, int | str]:
     db = get_db(request)

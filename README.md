@@ -153,6 +153,7 @@ OpenAI-compatible transcription and summary backends are optional. To reduce unn
 - Keep `[summary].per_repeater_scheduled = false` unless you need separate scheduled summaries for every repeater. Manual per-repeater summaries still work from the Summary tab.
 - Keep `[summary].skip_automated_only = true` so windows containing only repeater IDs, welcome messages, and tone announcements do not call the summary model.
 - Raise `[summary].min_transcripts` to `2` or `3` if one isolated transmission is not worth summarizing automatically.
+- Set `[summary].enabled = false` to pause scheduled summary model calls while still queuing due summary windows. RepeaterWatch keeps up to the last 24 hours of queued summary jobs and runs them oldest-first after summaries are enabled again. The Summary tab shows the queue and lets you remove jobs manually.
 - Leave `[activity_chat].backend = "noop"` unless you want manual chat turns to call a model. Use a cheaper conversational model such as `gpt-5.4-nano` for this path.
 
 These same controls are available in the More tab under API Usage. That panel also tracks remote transcription, summary, and activity chat calls over time, including skipped guardrail events, errors, returned token counts when available, and audio seconds sent for transcription.
@@ -336,6 +337,7 @@ For LM Studio summaries, prefer the native backend. It uses LM Studio's `/api/v1
 
 ```toml
 [summary]
+enabled = true
 backend = "lm-studio"
 base_url = "http://192.168.1.12:1234"
 model = "daily-gemma-12b-64k"

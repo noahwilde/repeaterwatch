@@ -39,6 +39,7 @@ SUMMARY_WINDOW_ALIASES = {
 REMOTE_SUMMARY_BACKENDS = {"openai-compatible", "lm-studio"}
 DAILY_ACTIVITY_PERIOD_GAP = timedelta(minutes=20)
 DAILY_INDEX_EXCERPT_CHARS = 220
+SUMMARY_QUEUE_MAX_AGE = timedelta(hours=24)
 REMOTE_SUMMARY_RATE_LIMIT_BACKOFF_SECONDS = 15 * 60
 REMOTE_SUMMARY_QUOTA_BACKOFF_SECONDS = 6 * 60 * 60
 
@@ -715,11 +716,17 @@ class SummaryWorker:
 
     async def generate_rolling(self, now: datetime | None = None) -> list[int]:
         summary_ids: list[int] = []
+        now_utc = _as_utc(now)
+        self.db.prune_summary_jobs((now_utc - SUMMARY_QUEUE_MAX_AGE).isoformat(timespec="seconds"))
         if self._remote_backoff_active():
             return summary_ids
+        if self.config.summary.enabled:
+            summary_ids.extend(await self._process_summary_queue(now_utc))
+            if self._remote_backoff_active():
+                return summary_ids
         repeaters = self.db.list_repeaters()
         local_tz = summary_timezone(self.config.summary.timezone)
-        bounds_now = _as_utc(now) - timedelta(seconds=self.config.summary.schedule_delay_seconds)
+        bounds_now = now_utc - timedelta(seconds=self.config.summary.schedule_delay_seconds)
         windows = list(dict.fromkeys(self.config.summary.scheduled_windows))
         targets: list[tuple[str, int | None]] = [(window_name, None) for window_name in windows]
         if self.config.summary.per_repeater_scheduled:
@@ -733,8 +740,11 @@ class SummaryWorker:
                 continue
             if self._period_summary_matches(window_name, repeater_id, start, end, source_ids):
                 continue
+            if not self.config.summary.enabled:
+                self._queue_summary_job(selection, repeater_id)
+                continue
             try:
-                summary_id = await self.service.generate_from_selection(selection, repeater_id, operation="scheduled")
+                summary_id = await self._generate_and_notify(selection, repeater_id, operation="scheduled")
             except RemoteSummaryRateLimited as exc:
                 backoff_seconds = self._start_remote_backoff(exc)
                 if exc.quota_exceeded:
@@ -751,20 +761,93 @@ class SummaryWorker:
                     )
                 break
             summary_ids.append(summary_id)
-            summary = self.db.query_one("SELECT * FROM summaries WHERE id = ?", (summary_id,))
-            if summary and summary["status"] == "completed" and self.keyword_engine:
-                repeater_name = "All repeaters"
-                if repeater_id is not None:
-                    repeater = self.db.get_repeater(repeater_id)
-                    repeater_name = repeater["name"] if repeater else "Repeater"
-                await self.keyword_engine.evaluate_and_notify(
-                    source_type="summary",
-                    source_id=summary_id,
-                    repeater_id=repeater_id,
-                    text=summary["text"],
-                    repeater_name=repeater_name,
-                )
         return summary_ids
+
+    async def _process_summary_queue(self, now_utc: datetime) -> list[int]:
+        summary_ids: list[int] = []
+        cutoff = (now_utc - SUMMARY_QUEUE_MAX_AGE).isoformat(timespec="seconds")
+        local_tz = summary_timezone(self.config.summary.timezone)
+        for job in self.db.pending_summary_jobs(cutoff, limit=200):
+            start = _parse_recording_time(job.get("start_time"))
+            end = _parse_recording_time(job.get("end_time"))
+            if start is None or end is None:
+                self.db.delete_summary_job(int(job["id"]))
+                continue
+            repeater_id = job.get("repeater_id")
+            repeater_id = int(repeater_id) if repeater_id is not None else None
+            selection = select_source_transcripts_between(
+                self.db,
+                str(job["window_name"]),
+                start,
+                end,
+                repeater_id,
+                local_tz,
+            )
+            source_ids = [row["id"] for row in selection.transcripts]
+            if len(source_ids) < self.config.summary.min_transcripts:
+                self.db.delete_summary_job(int(job["id"]))
+                continue
+            if self._period_summary_matches(selection.window_name, repeater_id, start, end, source_ids):
+                self.db.delete_summary_job(int(job["id"]))
+                continue
+            self._queue_summary_job(selection, repeater_id)
+            try:
+                summary_id = await self._generate_and_notify(selection, repeater_id, operation="queued")
+            except RemoteSummaryRateLimited as exc:
+                backoff_seconds = self._start_remote_backoff(exc)
+                self.db.mark_summary_job_error(int(job["id"]), str(exc))
+                if exc.quota_exceeded:
+                    logger.warning(
+                        "Remote summary quota exhausted while draining queued %s window; retrying after %.0fs",
+                        selection.window_name,
+                        backoff_seconds,
+                    )
+                else:
+                    logger.warning(
+                        "Remote summary rate limited while draining queued %s window; retrying after %.0fs",
+                        selection.window_name,
+                        backoff_seconds,
+                    )
+                break
+            except Exception as exc:
+                self.db.mark_summary_job_error(int(job["id"]), str(exc))
+                raise
+            self.db.delete_summary_job(int(job["id"]))
+            summary_ids.append(summary_id)
+        return summary_ids
+
+    def _queue_summary_job(self, selection: SummarySelection, repeater_id: int | None) -> int:
+        return self.db.upsert_summary_job(
+            {
+                "window_name": selection.window_name,
+                "repeater_id": repeater_id,
+                "start_time": selection.start_time.isoformat(timespec="seconds"),
+                "end_time": selection.end_time.isoformat(timespec="seconds"),
+                "source_transcript_ids": [row["id"] for row in selection.transcripts],
+            }
+        )
+
+    async def _generate_and_notify(
+        self,
+        selection: SummarySelection,
+        repeater_id: int | None,
+        operation: str,
+    ) -> int:
+        summary_id = await self.service.generate_from_selection(selection, repeater_id, operation=operation)
+        summary = self.db.query_one("SELECT * FROM summaries WHERE id = ?", (summary_id,))
+        if summary and summary["status"] == "completed" and self.keyword_engine:
+            repeater_name = "All repeaters"
+            if repeater_id is not None:
+                repeater = self.db.get_repeater(repeater_id)
+                repeater_name = repeater["name"] if repeater else "Repeater"
+            await self.keyword_engine.evaluate_and_notify(
+                source_type="summary",
+                source_id=summary_id,
+                repeater_id=repeater_id,
+                text=summary["text"],
+                repeater_name=repeater_name,
+            )
+        return summary_id
 
     def _remote_backoff_active(self) -> bool:
         return self.config.summary.backend == "openai-compatible" and time.monotonic() < self.remote_backoff_until

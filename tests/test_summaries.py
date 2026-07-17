@@ -333,6 +333,95 @@ def test_summary_worker_defaults_to_hourly_and_daily_without_per_repeater_duplic
         db.close()
 
 
+def test_summary_worker_queues_scheduled_jobs_when_disabled(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        _recording_with_transcript(
+            db,
+            repeater_id,
+            datetime(2026, 6, 21, 20, 30, tzinfo=UTC),
+            "K0XYZ handled an hourly net check-in.",
+        )
+        config = AppConfig()
+        config.summary.enabled = False
+        config.summary.backend = "noop"
+        config.summary.timezone = "UTC"
+        config.summary.scheduled_windows = ["hour"]
+        worker = SummaryWorker(db, config)
+
+        first = asyncio.run(worker.generate_rolling(now=now))
+        second = asyncio.run(worker.generate_rolling(now=now))
+        jobs = db.list_summary_jobs()
+
+        assert first == []
+        assert second == []
+        assert db.list_summaries(20) == []
+        assert len(jobs) == 1
+        assert jobs[0]["window_name"] == "hour"
+        assert jobs[0]["status"] == "pending"
+        assert jobs[0]["source_transcript_ids"]
+    finally:
+        db.close()
+
+
+def test_summary_worker_drains_queued_jobs_when_reenabled(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        repeater_id = db.create_repeater({"name": "K0RPT Main", "frequency_mhz": 146.745, "tone": "192.8"})
+        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        _recording_with_transcript(
+            db,
+            repeater_id,
+            datetime(2026, 6, 21, 20, 30, tzinfo=UTC),
+            "K0XYZ handled an hourly net check-in.",
+        )
+        config = AppConfig()
+        config.summary.enabled = False
+        config.summary.backend = "noop"
+        config.summary.timezone = "UTC"
+        config.summary.scheduled_windows = ["hour"]
+        worker = SummaryWorker(db, config)
+
+        asyncio.run(worker.generate_rolling(now=now))
+        config.summary.enabled = True
+        summary_ids = asyncio.run(worker.generate_rolling(now=now))
+        summaries = db.list_summaries(20)
+
+        assert len(summary_ids) == 1
+        assert len(summaries) == 1
+        assert summaries[0]["window_name"] == "hour"
+        assert db.list_summary_jobs() == []
+    finally:
+        db.close()
+
+
+def test_summary_worker_prunes_queued_jobs_older_than_24_hours(tmp_path):
+    db = Database(tmp_path / "rw.sqlite3")
+    try:
+        now = datetime(2026, 6, 21, 21, 46, tzinfo=UTC)
+        db.upsert_summary_job(
+            {
+                "window_name": "hour",
+                "start_time": datetime(2026, 6, 20, 10, 0, tzinfo=UTC).isoformat(timespec="seconds"),
+                "end_time": datetime(2026, 6, 20, 11, 0, tzinfo=UTC).isoformat(timespec="seconds"),
+                "source_transcript_ids": [1],
+                "created_at": datetime(2026, 6, 20, 20, 0, tzinfo=UTC).isoformat(timespec="seconds"),
+            }
+        )
+        config = AppConfig()
+        config.summary.enabled = False
+        config.summary.timezone = "UTC"
+        worker = SummaryWorker(db, config)
+
+        asyncio.run(worker.generate_rolling(now=now))
+
+        assert db.list_summary_jobs() == []
+    finally:
+        db.close()
+
+
 def test_summary_worker_backs_off_after_remote_rate_limit(tmp_path):
     db = Database(tmp_path / "rw.sqlite3")
     try:
